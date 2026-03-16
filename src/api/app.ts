@@ -20,6 +20,7 @@ import { transcribeRoutes } from './routes/transcribe.routes';
 import { publicJobsRoutes } from './routes/publicJobs';
 import { candidateAuthRoutes } from './routes/candidateAuth';
 import { communityRoutes } from './routes/community';
+import heygenRoutes from './routes/heygen';
 
 const app = express();
 
@@ -47,5 +48,7 @@ app.use(`${config.apiPrefix}/voice-loop`, voiceLoopRoutes);
 app.use(`${config.apiPrefix}/transcribe`, transcribeRoutes);
 // Alias to satisfy clients expecting POST /api/transcribe
 app.use('/api/transcribe', transcribeRoutes);
+// HeyGen streaming avatar token proxy (keeps API key secret)
+app.use(`${config.apiPrefix}/heygen`, heygenRoutes);
 
 export default app;

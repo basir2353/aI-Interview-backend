@@ -54,10 +54,8 @@ function normalizeScheduleQuestions(input: {
 
   const defaultDifficulty = input.defaultDifficulty ?? 'medium';
   const general = toList(input.customQuestionsRaw, { isCoding: false, defaultDifficulty });
-  const coding =
-    input.role === 'technical'
-      ? toList(input.codingQuestionsRaw, { isCoding: true, defaultDifficulty })
-      : [];
+  // Allow coding questions for all roles — recruiter-added coding question is served as the last question
+  const coding = toList(input.codingQuestionsRaw, { isCoding: true, defaultDifficulty });
   return [...general, ...coding].slice(0, 30);
 }
 

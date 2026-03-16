@@ -57,6 +57,9 @@ export const config = {
     password: process.env.ADMIN_PASSWORD || 'admin123',
   },
 
+  /** HeyGen streaming avatar API key (https://app.heygen.com/settings?nav=API). */
+  heygenApiKey: process.env.HEYGEN_API_KEY || '',
+
   /** Base URL of the frontend (for join links). No trailing slash. */
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
 

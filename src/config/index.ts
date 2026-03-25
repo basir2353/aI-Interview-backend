@@ -63,6 +63,17 @@ export const config = {
   /** Base URL of the frontend (for join links). No trailing slash. */
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
 
+  /** Avatar pipeline (SadTalker + Wav2Lip + Coqui TTS). When enabled, AI interviewer replies can include a talking-head video. */
+  avatar: {
+    enabled: String(process.env.AVATAR_ENABLED || 'false').toLowerCase() === 'true',
+    defaultImage: process.env.AVATAR_DEFAULT_IMAGE || '/avatars/interviewer.png',
+    outputPath: process.env.AVATAR_OUTPUT_PATH || 'uploads/avatars',
+    /** Max time in ms to wait for avatar generation before returning reply without video (non-blocking). */
+    generationTimeoutMs: parseInt(process.env.AVATAR_GENERATION_TIMEOUT_MS || '2500', 10),
+    /** Python script path (relative to backend cwd or absolute). Default: ../ai-avatar/generate_avatar.py when backend runs from its folder. */
+    pythonScriptPath: process.env.AVATAR_PYTHON_SCRIPT || path.join('..', 'ai-avatar', 'generate_avatar.py'),
+  },
+
   /** Mail used when the app sends email (e.g. password reset, interview schedule). From = MAIL_FROM; recipient = user who requested reset or candidate. */
   mail: {
     service: process.env.MAIL_SERVICE || process.env.SMTP_SERVICE || '',

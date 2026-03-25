@@ -13,6 +13,7 @@ import { conversationManager } from './ConversationManager';
 import { questionStrategyEngine } from './QuestionStrategyEngine';
 import { evaluationEngine } from './EvaluationEngine';
 import { scoringReportService } from './ScoringReportService';
+import { avatarService } from '../avatar/avatar.service';
 import type { InterviewState, InterviewReport } from '../../types';
 
 export interface SubmitAnswerInput {
@@ -26,6 +27,8 @@ export interface SubmitAnswerResult {
   success: boolean;
   state: InterviewState | null;
   nextReply?: string;
+  /** Talking-head video URL for nextReply when avatar pipeline is enabled and succeeds. */
+  avatarVideo?: string;
   evaluation?: { score: number; maxScore: number };
   report?: InterviewReport;
   /** Set when success is false: why the submission was rejected */
@@ -42,6 +45,8 @@ export interface GetNextReplyResult {
   success: boolean;
   state: InterviewState | null;
   reply: string;
+  /** Talking-head video URL for this reply when avatar pipeline is enabled and succeeds. */
+  avatarVideo?: string;
   questionId?: string;
   phase?: string;
 }
@@ -137,11 +142,21 @@ export class AIInterviewerOrchestrator {
       console.error('getNextReplyInternal failed (using fallback):', err);
       aiReply = next.questionText || 'Thank you for that. Can you tell me a bit more?';
     }
+    let avatarVideo: string | undefined;
+    try {
+      if (avatarService.isEnabled()) {
+        const avatarResult = await avatarService.generateAvatarWithTimeout({ text: aiReply });
+        avatarVideo = avatarResult.videoUrl;
+      }
+    } catch (err) {
+      console.error('Avatar generation failed (non-blocking):', err);
+    }
     const aiTurn = conversationManager.createTurn('ai', aiReply, {
       questionId: next.questionId,
       codingStarterCode: next.starterCode ?? undefined,
       codingLanguage: next.language ?? undefined,
       isCodingQuestion: next.isCodingQuestion ?? false,
+      avatarVideo,
     });
     await interviewSessionService.appendTurn(input.interviewId, aiTurn, {
       phase: next.phase,
@@ -153,6 +168,7 @@ export class AIInterviewerOrchestrator {
       success: true,
       state: finalState ?? updatedState,
       nextReply: aiReply,
+      avatarVideo,
       evaluation: { score: evaluation.score, maxScore: evaluation.maxScore },
     };
   }
@@ -190,11 +206,21 @@ export class AIInterviewerOrchestrator {
       rawReply = await this.getNextReplyInternal(state, next.questionText, next.questionId, next.phase);
     }
     const reply = this.withGreetingIfFirstTurn(state, rawReply);
+    let avatarVideo: string | undefined;
+    try {
+      if (avatarService.isEnabled()) {
+        const avatarResult = await avatarService.generateAvatarWithTimeout({ text: reply });
+        avatarVideo = avatarResult.videoUrl;
+      }
+    } catch (err) {
+      console.error('Avatar generation failed (non-blocking):', err);
+    }
     const aiTurn = conversationManager.createTurn('ai', reply, {
       questionId: next.questionId,
       codingStarterCode: next.starterCode ?? undefined,
       codingLanguage: next.language ?? undefined,
       isCodingQuestion: next.isCodingQuestion ?? false,
+      avatarVideo,
     });
     await interviewSessionService.appendTurn(input.interviewId, aiTurn, {
       phase: next.phase,
@@ -206,6 +232,7 @@ export class AIInterviewerOrchestrator {
       success: true,
       state: updatedState ?? state,
       reply,
+      avatarVideo,
       questionId: next.questionId,
       phase: next.phase,
     };

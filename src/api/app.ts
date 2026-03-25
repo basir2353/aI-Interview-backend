@@ -21,6 +21,7 @@ import { publicJobsRoutes } from './routes/publicJobs';
 import { candidateAuthRoutes } from './routes/candidateAuth';
 import { communityRoutes } from './routes/community';
 import heygenRoutes from './routes/heygen';
+import { avatarRoutes } from './routes/avatar';
 
 const app = express();
 
@@ -50,5 +51,7 @@ app.use(`${config.apiPrefix}/transcribe`, transcribeRoutes);
 app.use('/api/transcribe', transcribeRoutes);
 // HeyGen streaming avatar token proxy (keeps API key secret)
 app.use(`${config.apiPrefix}/heygen`, heygenRoutes);
+// SadTalker + Wav2Lip + Coqui TTS talking-head avatar
+app.use(`${config.apiPrefix}/avatar`, avatarRoutes);
 
 export default app;

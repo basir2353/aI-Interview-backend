@@ -61,6 +61,14 @@ async function start() {
   const signalingService = new SignalingService(io);
   signalingService.startCleanupInterval();
 
+  // Optional: start avatar queue worker (runs when Redis is configured)
+  try {
+    const { startAvatarWorker } = await import('./queues/avatarQueue');
+    startAvatarWorker();
+  } catch (_) {
+    // Queue optional
+  }
+
   logger.info('All services initialized');
 
   // Start server

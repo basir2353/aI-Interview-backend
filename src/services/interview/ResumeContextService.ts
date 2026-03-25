@@ -91,5 +91,8 @@ export function computeResumeJobMatchScore(jobText: string, resumeText: string):
   for (const w of jobWords) {
     if (resumeWords.has(w)) hit++;
   }
-  return Math.round(Math.min(100, (hit / jobWords.size) * 100));
+  const raw = (hit / jobWords.size) * 100;
+  // Scale up so good matches (e.g. 67% keyword overlap) display as ~80%, cap at 100
+  const boosted = Math.min(100, Math.round(raw * 1.2));
+  return boosted;
 }

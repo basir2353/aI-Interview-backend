@@ -5,6 +5,8 @@
 import path from 'path';
 import dotenv from 'dotenv';
 
+const PRODUCTION_FRONTEND = 'https://a-i-interview-frontend.vercel.app';
+
 // Load .env from backend folder so MAIL_FROM etc. are always from backend/.env (not cwd)
 const backendRoot = path.resolve(__dirname, '../..');
 dotenv.config({ path: path.join(backendRoot, '.env') });
@@ -68,7 +70,9 @@ export const config = {
   heygenApiKey: process.env.HEYGEN_API_KEY || '',
 
   /** Base URL of the frontend (for join links). No trailing slash. */
-  frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
+  frontendUrl:
+    process.env.FRONTEND_URL ||
+    (process.env.NODE_ENV === 'production' ? PRODUCTION_FRONTEND : 'http://localhost:3000'),
 
   /** Avatar pipeline (SadTalker + Wav2Lip + Coqui TTS). When enabled, AI interviewer replies can include a talking-head video. */
   avatar: {

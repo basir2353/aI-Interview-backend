@@ -4,7 +4,7 @@
   "description": "AI Interviewer Platform - Backend API and session engine",
   "main": "dist/index.js",
   "prisma": {
-    "seed": "ts-node --transpile-only prisma/seed.ts"
+    "seed": "node prisma/seed.cjs"
   },
   "scripts": {
     "build": "prisma generate --schema=./prisma/schema.prisma && tsc",
@@ -18,6 +18,7 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "db:seed": "npx prisma db seed",
+    "db:seed:direct": "node prisma/seed.cjs",
     "db:schema-scheduled": "node scripts/run-schema-scheduled.cjs"
   },
   "engines": {

@@ -56,6 +56,27 @@ Redeploy the frontend so `/api/transcribe` proxies to Railway.
 | STT | brew install whisper-cpp | Built into Docker image |
 | Redis | Optional local | Optional Railway Redis plugin |
 
+## Re-seed the database
+
+**Inside the Railway container shell** (Service → backend → Shell):
+
+```bash
+npm run db:seed
+# or
+node prisma/seed.cjs
+```
+
+`DATABASE_URL` is already set in the container — do **not** use `railway run` inside the shell.
+
+**From your local machine** (Railway CLI installed locally):
+
+```bash
+railway link
+railway run npm run db:seed
+```
+
+The backend also seeds candidate + competencies automatically on startup via `bootstrapDatabase()`.
+
 ## Troubleshooting
 
 - **Build slow / fails on whisper.cpp** — First Docker build compiles whisper.cpp (~5–10 min). Subsequent builds cache layers.

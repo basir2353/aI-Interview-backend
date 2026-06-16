@@ -11,6 +11,19 @@ import { llmService } from './services/llm.service';
 import { sttService } from './services/stt.service';
 import { logger } from './config/logger';
 
+function getSocketCorsOrigins(): string[] {
+  const origins = new Set<string>();
+  origins.add(config.frontendUrl.replace(/\/$/, ''));
+  origins.add('http://localhost:3000');
+  if (process.env.CORS_ORIGINS) {
+    for (const o of process.env.CORS_ORIGINS.split(',')) {
+      const trimmed = o.trim();
+      if (trimmed) origins.add(trimmed.replace(/\/$/, ''));
+    }
+  }
+  return [...origins];
+}
+
 async function start() {
   try {
     await bootstrapDatabase();
@@ -24,7 +37,7 @@ async function start() {
   // Initialize Socket.io
   const io = new SocketIOServer(httpServer, {
     cors: {
-      origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+      origin: getSocketCorsOrigins(),
       methods: ['GET', 'POST'],
       credentials: true,
     },
@@ -75,7 +88,7 @@ async function start() {
   const server = httpServer.listen(config.port, config.host, () => {
     logger.info(`Server listening on ${config.host}:${config.port} (env: ${config.env})`);
     logger.info(`WebRTC signaling ready`);
-    logger.info(`Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
+    logger.info(`Frontend URL: ${config.frontendUrl}`);
   });
 
   return server;

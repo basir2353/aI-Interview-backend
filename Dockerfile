@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /whisper
 RUN git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git . \
-    && cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    && cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
     && cmake --build build --config Release -j"$(nproc)"
 
 # ── Stage 2: build Node app ───────────────────────────────────────────────────
@@ -39,6 +39,12 @@ ENV WHISPER_CPP_PATH=/usr/local/bin/whisper-cli
 ENV WHISPER_MODEL_PATH=/app/models/ggml-base.en.bin
 
 COPY --from=whisper-builder /whisper/build/bin/whisper-cli /usr/local/bin/whisper-cli
+# Copy any shared libs if static build still emits them (libwhisper.so.1, libggml, etc.)
+COPY --from=whisper-builder /whisper/build /tmp/whisper-build
+RUN find /tmp/whisper-build -name '*.so*' -exec cp -a {} /usr/local/lib/ \; 2>/dev/null || true \
+    && ldconfig 2>/dev/null || true \
+    && rm -rf /tmp/whisper-build \
+    && whisper-cli -h >/dev/null 2>&1 || (echo "whisper-cli failed self-test" && exit 1)
 
 COPY package.json package-lock.json ./
 COPY prisma ./prisma/

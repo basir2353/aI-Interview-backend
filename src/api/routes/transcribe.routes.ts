@@ -332,14 +332,20 @@ async function transcribeNormalizedAudio(normalizedPath: string, res: Response):
   const ws = await runCommand(whisperBin, whisperArgs, { timeoutMs: 240000 });
 
   if (ws.code !== 0) {
+    const errOut = ws.stderr.slice(0, 2000) || ws.stdout.slice(0, 2000);
     logger.error('[transcribe] whisper failed', {
       code: ws.code,
-      stderr: ws.stderr.slice(0, 2000),
+      stderr: errOut.slice(0, 2000),
       stdout: ws.stdout.slice(0, 500),
     });
+    if (config.ai.openaiApiKey && /shared libraries|libwhisper|ENOENT|cannot open shared object/i.test(errOut)) {
+      logger.warn('[transcribe] whisper.cpp broken at runtime; falling back to OpenAI Whisper API');
+      const transcript = (await transcribeWithOpenAI(normalizedPath)).trim();
+      if (transcript) return res.json({ transcript });
+    }
     return res.status(500).json({
       error: 'whisper.cpp failed',
-      details: ws.stderr.slice(0, 2000) || ws.stdout.slice(0, 2000),
+      details: errOut,
     });
   }
 

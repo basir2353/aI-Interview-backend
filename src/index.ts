@@ -31,6 +31,15 @@ async function start() {
     logger.warn('Database bootstrap had errors (some tables may already exist):', (e as Error).message);
   }
 
+  try {
+    const { ensurePositionsSchema, seedSampleJobsIfEmpty } = await import('./db/ensure-positions');
+    await ensurePositionsSchema();
+    await seedSampleJobsIfEmpty();
+    logger.info('Positions table ready (public jobs)');
+  } catch (e) {
+    logger.warn('Positions setup failed:', (e as Error).message);
+  }
+
   // Create HTTP server
   const httpServer = createServer(app);
 

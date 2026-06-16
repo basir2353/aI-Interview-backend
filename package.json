@@ -19,6 +19,7 @@
     "db:studio": "prisma studio",
     "db:seed": "npx prisma db seed",
     "db:seed:direct": "node prisma/seed.cjs",
+    "db:fix-railway": "node scripts/fix-railway-db.cjs",
     "db:schema-scheduled": "node scripts/run-schema-scheduled.cjs"
   },
   "engines": {

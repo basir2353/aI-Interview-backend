@@ -5,6 +5,14 @@
 import { query } from './client';
 
 export async function ensurePositionsSchema(): Promise<void> {
+  // Prisma may have created quoted table "Position" — migrate into positions
+  const { rows: tables } = await query<{ table_name: string }>(
+    `SELECT table_name FROM information_schema.tables
+     WHERE table_schema = 'public' AND table_name IN ('Position', 'positions')`
+  );
+  const hasPrismaPosition = tables.some((t) => t.table_name === 'Position');
+  const hasPositions = tables.some((t) => t.table_name === 'positions');
+
   await query(`
     CREATE TABLE IF NOT EXISTS positions (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -19,12 +27,22 @@ export async function ensurePositionsSchema(): Promise<void> {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+
+  if (hasPrismaPosition && hasPositions) {
+    await query(`
+      INSERT INTO positions (id, title, role, created_at, is_active)
+      SELECT id, title, role, created_at, true FROM "Position"
+      ON CONFLICT (id) DO NOTHING
+    `);
+  }
+
   await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS company_name VARCHAR(255);`);
   await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS description TEXT;`);
   await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS requirements TEXT;`);
   await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS location VARCHAR(255);`);
   await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS salary_range VARCHAR(100);`);
-  await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;`);
+  await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;`);
+  await query(`UPDATE positions SET is_active = true WHERE is_active IS NULL;`);
   await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS auto_schedule_enabled BOOLEAN NOT NULL DEFAULT false;`);
   await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS created_by UUID;`);
   await query(`CREATE INDEX IF NOT EXISTS idx_positions_is_active ON positions(is_active);`);

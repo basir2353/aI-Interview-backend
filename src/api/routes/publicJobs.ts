@@ -54,7 +54,7 @@ router.get('/', async (_req: Request, res: Response) => {
     }>(
       `SELECT id, title, company_name, description, requirements, location, salary_range, role, created_at
        FROM positions
-       WHERE is_active = true
+       WHERE COALESCE(is_active, true) = true
        ORDER BY created_at DESC`
     );
     return res.json({ jobs: rows });

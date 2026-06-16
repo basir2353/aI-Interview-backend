@@ -33,6 +33,22 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', ts: new Date().toISOString() });
 });
 
+app.get('/health/db', async (_req, res) => {
+  try {
+    const { query } = await import('../db/client');
+    await query('SELECT 1');
+    const { rows } = await query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM positions WHERE COALESCE(is_active, true) = true`
+    );
+    res.json({ status: 'ok', jobs: parseInt(rows[0]?.count ?? '0', 10) });
+  } catch (e) {
+    res.status(503).json({
+      status: 'error',
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
+});
+
 app.use(`${config.apiPrefix}/interview`, interviewRoutes);
 app.use(`${config.apiPrefix}/report`, reportRoutes);
 app.use(`${config.apiPrefix}/admin`, adminRoutes);

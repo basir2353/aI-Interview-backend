@@ -8,6 +8,7 @@ import { query } from '../../db/client';
 import { optionalAuth } from '../middleware/auth';
 import crypto from 'crypto';
 import { getResumeTextForMatch, computeResumeJobMatchScore } from '../../services/interview/ResumeContextService';
+import { ensurePositionsSchema, seedSampleJobsIfEmpty } from '../../db/ensure-positions';
 
 const router = Router();
 const ROLES = ['technical', 'behavioral', 'sales', 'customer_success'] as const;
@@ -38,6 +39,8 @@ const upload = multer({
 
 router.get('/', async (_req: Request, res: Response) => {
   try {
+    await ensurePositionsSchema();
+    await seedSampleJobsIfEmpty();
     const { rows } = await query<{
       id: string;
       title: string;
@@ -56,8 +59,12 @@ router.get('/', async (_req: Request, res: Response) => {
     );
     return res.json({ jobs: rows });
   } catch (e) {
-    console.error('Public jobs list error', e);
-    return res.status(500).json({ error: 'Failed to load jobs' });
+    const message = e instanceof Error ? e.message : String(e);
+    console.error('Public jobs list error', message);
+    return res.status(500).json({
+      error: 'Failed to load jobs',
+      details: process.env.NODE_ENV === 'production' ? undefined : message,
+    });
   }
 });
 

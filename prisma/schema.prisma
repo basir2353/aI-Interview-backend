@@ -29,13 +29,22 @@ model Candidate {
 }
 
 model Position {
-  id        String   @id @default(uuid())
-  title     String
-  role      String
-  createdAt DateTime @default(now()) @map("created_at")
-  interviews       Interview[]
-  questionTemplates QuestionTemplate[]
-  scheduledInterviews ScheduledInterview[]
+  id                   String   @id @default(uuid())
+  title                String
+  role                 String
+  companyName          String?  @map("company_name")
+  description          String?  @db.Text
+  requirements         String?  @db.Text
+  location             String?
+  salaryRange          String?  @map("salary_range")
+  isActive             Boolean  @default(true) @map("is_active")
+  autoScheduleEnabled  Boolean  @default(false) @map("auto_schedule_enabled")
+  createdAt            DateTime @default(now()) @map("created_at")
+  interviews           Interview[]
+  questionTemplates    QuestionTemplate[]
+  scheduledInterviews  ScheduledInterview[]
+
+  @@map("positions")
 }
 
 model Interview {

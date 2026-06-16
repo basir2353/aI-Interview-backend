@@ -9,11 +9,17 @@ let pool: Pool | null = null;
 
 export function getPool(): Pool {
   if (!pool) {
+    const connectionString = config.database.url;
+    const needsSsl =
+      process.env.PGSSLMODE === 'require' ||
+      /railway\.app|rlwy\.net/i.test(connectionString) ||
+      (process.env.NODE_ENV === 'production' && !connectionString.includes('localhost'));
     pool = new Pool({
-      connectionString: config.database.url,
+      connectionString,
       max: 20,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: 10000,
+      ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
     });
     pool.on('error', (err: Error) => {
       console.error('Unexpected DB pool error', err);

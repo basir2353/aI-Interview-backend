@@ -8,16 +8,20 @@ import { query } from '../../db/client';
 import { optionalAuth } from '../middleware/auth';
 import crypto from 'crypto';
 import { getResumeTextForMatch, computeResumeJobMatchScore } from '../../services/interview/ResumeContextService';
-import { ensurePositionsSchema, seedSampleJobsIfEmpty } from '../../db/ensure-positions';
+import { ensurePositionsSchema, listPublicJobs } from '../../db/ensure-positions';
 
 const router = Router();
 const ROLES = ['technical', 'behavioral', 'sales', 'customer_success'] as const;
-const resumeUploadDir = path.resolve(process.cwd(), 'uploads', 'resumes');
-fs.mkdirSync(resumeUploadDir, { recursive: true });
+
+function getResumeUploadDir(): string {
+  const dir = path.resolve(process.cwd(), 'uploads', 'resumes');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    cb(null, resumeUploadDir);
+    cb(null, getResumeUploadDir());
   },
   filename: (_req, file, cb) => {
     const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -39,24 +43,7 @@ const upload = multer({
 
 router.get('/', async (_req: Request, res: Response) => {
   try {
-    await ensurePositionsSchema();
-    await seedSampleJobsIfEmpty();
-    const { rows } = await query<{
-      id: string;
-      title: string;
-      company_name: string | null;
-      description: string | null;
-      requirements: string | null;
-      location: string | null;
-      salary_range: string | null;
-      role: string;
-      created_at: string;
-    }>(
-      `SELECT id, title, company_name, description, requirements, location, salary_range, role, created_at
-       FROM positions
-       WHERE COALESCE(is_active, true) = true
-       ORDER BY created_at DESC`
-    );
+    const rows = await listPublicJobs();
     return res.json({ jobs: rows });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

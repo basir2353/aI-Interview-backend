@@ -29,23 +29,82 @@ export async function ensurePositionsSchema(): Promise<void> {
   `);
 
   if (hasPrismaPosition && hasPositions) {
-    await query(`
-      INSERT INTO positions (id, title, role, created_at, is_active)
-      SELECT id, title, role, created_at, true FROM "Position"
-      ON CONFLICT (id) DO NOTHING
-    `);
+    try {
+      await query(`
+        INSERT INTO positions (id, title, role, created_at, is_active)
+        SELECT id, title, role, created_at, true FROM "Position"
+        ON CONFLICT (id) DO NOTHING
+      `);
+    } catch {
+      // "Position" table may not exist or schema differs — ignore
+    }
   }
 
-  await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS company_name VARCHAR(255);`);
-  await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS description TEXT;`);
-  await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS requirements TEXT;`);
-  await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS location VARCHAR(255);`);
-  await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS salary_range VARCHAR(100);`);
-  await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;`);
-  await query(`UPDATE positions SET is_active = true WHERE is_active IS NULL;`);
-  await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS auto_schedule_enabled BOOLEAN NOT NULL DEFAULT false;`);
-  await query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS created_by UUID;`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_positions_is_active ON positions(is_active);`);
+  const alters = [
+    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS company_name VARCHAR(255)`,
+    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS description TEXT`,
+    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS requirements TEXT`,
+    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS location VARCHAR(255)`,
+    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS salary_range VARCHAR(100)`,
+    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true`,
+    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS auto_schedule_enabled BOOLEAN DEFAULT false`,
+    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS created_by UUID`,
+    `ALTER TABLE positions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
+  ];
+  for (const sql of alters) {
+    try {
+      await query(sql);
+    } catch {
+      // continue — best effort
+    }
+  }
+  try {
+    await query(`UPDATE positions SET is_active = true WHERE is_active IS NULL`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_positions_is_active ON positions(is_active)`);
+  } catch {
+    // ignore
+  }
+}
+
+export type PublicJobRow = {
+  id: string;
+  title: string;
+  company_name: string | null;
+  description: string | null;
+  requirements: string | null;
+  location: string | null;
+  salary_range: string | null;
+  role: string;
+  created_at: string;
+};
+
+/** List jobs with fallback when extended columns are missing. */
+export async function listPublicJobs(): Promise<PublicJobRow[]> {
+  await ensurePositionsSchema();
+  await seedSampleJobsIfEmpty();
+
+  const fullSql = `
+    SELECT id, title, company_name, description, requirements, location, salary_range, role, created_at
+    FROM positions
+    WHERE COALESCE(is_active, true) = true
+    ORDER BY created_at DESC NULLS LAST`;
+
+  try {
+    const { rows } = await query<PublicJobRow>(fullSql);
+    return rows;
+  } catch {
+    const { rows } = await query<{ id: string; title: string; role: string; created_at: string }>(
+      `SELECT id, title, role, created_at FROM positions ORDER BY created_at DESC NULLS LAST`
+    );
+    return rows.map((r) => ({
+      ...r,
+      company_name: null,
+      description: null,
+      requirements: null,
+      location: null,
+      salary_range: null,
+    }));
+  }
 }
 
 export async function seedSampleJobsIfEmpty(): Promise<void> {

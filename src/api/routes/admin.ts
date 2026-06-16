@@ -44,11 +44,12 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const { email, password } = req.body as { email: string; password: string };
-      const normalizedEmail = email.toLowerCase();
+      const normalizedEmail = email.trim().toLowerCase();
+      const normalizedPassword = password.trim();
 
       // 1) Env super admin
       if (isSuperAdminEmail(normalizedEmail)) {
-        if (password !== config.admin.password) {
+        if (normalizedPassword !== config.admin.password) {
           return res.status(401).json({ error: 'Invalid email or password' });
         }
         const token = jwt.sign(
@@ -68,7 +69,7 @@ router.post(
         return res.status(401).json({ error: 'Invalid email or password' });
       }
       const user = rows[0];
-      const valid = await bcrypt.compare(password, user.password_hash);
+      const valid = await bcrypt.compare(normalizedPassword, user.password_hash);
       if (!valid) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }

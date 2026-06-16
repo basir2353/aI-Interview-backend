@@ -62,8 +62,8 @@ export const config = {
   },
 
   admin: {
-    email: process.env.ADMIN_EMAIL || 'admin@example.com',
-    password: process.env.ADMIN_PASSWORD || 'admin123',
+    email: (process.env.ADMIN_EMAIL || 'admin@example.com').trim().toLowerCase(),
+    password: (process.env.ADMIN_PASSWORD || 'admin123').trim(),
   },
 
   /** HeyGen streaming avatar API key (https://app.heygen.com/settings?nav=API). */

@@ -69,6 +69,10 @@ npm start     # node dist/index.js
 
 API base: `http://localhost:4000/api/v1`
 
+## Deploy on Railway
+
+See **[RAILWAY.md](./RAILWAY.md)** for step-by-step Railway deployment (Docker, Postgres, env vars).
+
 ## API
 
 | Method | Path | Description |

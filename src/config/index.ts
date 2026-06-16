@@ -12,6 +12,8 @@ dotenv.config({ path: path.join(backendRoot, '.env') });
 export const config = {
   env: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '4000', 10),
+  /** Bind address for HTTP server (0.0.0.0 required for Railway/Docker). */
+  host: process.env.HOST || '0.0.0.0',
   apiPrefix: process.env.API_PREFIX || '/api/v1',
 
   jwt: {
@@ -39,6 +41,11 @@ export const config = {
     openRouterModel: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
     defaultTemperature: 0.4,
     maxContextTokens: 12000,
+  },
+
+  /** Speech-to-text: local (whisper.cpp) or openai (Whisper API – lighter for cloud). */
+  stt: {
+    provider: (process.env.STT_PROVIDER || 'local').toLowerCase() as 'local' | 'openai',
   },
 
   storage: {

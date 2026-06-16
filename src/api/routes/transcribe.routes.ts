@@ -5,6 +5,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { spawn, spawnSync } from 'child_process';
 import { logger } from '../../config/logger';
+import { config } from '../../config';
+import { OpenAISTTService } from '../../ai/stt/OpenAISTTService';
 
 const router = Router();
 let whisperBuildPromise: Promise<void> | null = null;
@@ -260,6 +262,113 @@ function extractTranscriptFromWhisperStdout(stdout: string): string {
     .trim();
 }
 
+async function transcribeWithOpenAI(filePath: string): Promise<string> {
+  const service = new OpenAISTTService();
+  const buffer = fs.readFileSync(filePath);
+  return service.transcribe(buffer);
+}
+
+async function transcribeNormalizedAudio(normalizedPath: string, res: Response): Promise<Response> {
+  if (config.stt.provider === 'openai') {
+    if (!config.ai.openaiApiKey) {
+      return res.status(500).json({
+        error: 'OpenAI STT not configured',
+        details: 'Set STT_PROVIDER=openai and OPENAI_API_KEY in Railway variables.',
+      });
+    }
+    logger.info('[transcribe] using OpenAI Whisper API');
+    const transcript = (await transcribeWithOpenAI(normalizedPath)).trim();
+    if (!transcript) {
+      return res.status(422).json({ error: 'Empty transcript', details: 'OpenAI returned no text.' });
+    }
+    return res.json({ transcript });
+  }
+
+  const whisperBin = await resolveWhisperBin();
+  if (!whisperBin) {
+    if (config.ai.openaiApiKey) {
+      logger.warn('[transcribe] whisper.cpp unavailable; falling back to OpenAI Whisper API');
+      const transcript = (await transcribeWithOpenAI(normalizedPath)).trim();
+      if (!transcript) {
+        return res.status(422).json({ error: 'Empty transcript', details: 'OpenAI returned no text.' });
+      }
+      return res.json({ transcript });
+    }
+    return res.status(500).json({
+      error: 'Whisper executable not found',
+      details:
+        'Install whisper.cpp CLI (macOS: brew install whisper-cpp) or set STT_PROVIDER=openai with OPENAI_API_KEY for cloud transcription.',
+    });
+  }
+
+  const modelPath =
+    process.env.WHISPER_MODEL_PATH ||
+    pickFirstExisting([
+      path.join(process.cwd(), 'models', 'ggml-base.en.bin'),
+      path.join(process.cwd(), 'whisper.cpp', 'models', 'ggml-base.en.bin'),
+    ]);
+
+  if (!modelPath) {
+    return res.status(500).json({
+      error: 'Whisper model not found',
+      details:
+        'Expected models/ggml-base.en.bin (or set WHISPER_MODEL_PATH). From the backend folder run: ./whisper.cpp/models/download-ggml-model.sh base.en ./models',
+    });
+  }
+
+  const outputTxtPath = `${normalizedPath}.txt`;
+  const whisperArgs = [
+    '-m',
+    modelPath,
+    '-f',
+    normalizedPath,
+    '-l',
+    process.env.WHISPER_LANGUAGE || 'en',
+    '--no-timestamps',
+    '-otxt',
+  ];
+
+  logger.info('[transcribe] running whisper.cpp', { bin: whisperBin, args: whisperArgs.join(' ') });
+  const ws = await runCommand(whisperBin, whisperArgs, { timeoutMs: 240000 });
+
+  if (ws.code !== 0) {
+    logger.error('[transcribe] whisper failed', {
+      code: ws.code,
+      stderr: ws.stderr.slice(0, 2000),
+      stdout: ws.stdout.slice(0, 500),
+    });
+    return res.status(500).json({
+      error: 'whisper.cpp failed',
+      details: ws.stderr.slice(0, 2000) || ws.stdout.slice(0, 2000),
+    });
+  }
+
+  let transcript = extractTranscriptFromWhisperStdout(ws.stdout);
+  if (!transcript && outputTxtPath && fs.existsSync(outputTxtPath)) {
+    try {
+      transcript = fs.readFileSync(outputTxtPath, 'utf8').replace(/\s+/g, ' ').trim();
+    } catch {
+      // ignore
+    }
+  }
+
+  logger.info('[transcribe] whisper output', {
+    transcriptPreview: transcript ? transcript.slice(0, 120) : '',
+    stdoutBytes: ws.stdout.length,
+    stderrBytes: ws.stderr.length,
+  });
+
+  if (!transcript) {
+    return res.status(422).json({
+      error: 'Empty transcript',
+      details:
+        'Whisper returned no text. Check that audio contains speech and that ffmpeg normalization succeeded.',
+    });
+  }
+
+  return res.json({ transcript });
+}
+
 router.post('/', upload.single('audio'), async (req: Request, res: Response) => {
   const file = (req as any).file as
     | { path: string; originalname?: string; mimetype?: string; size?: number }
@@ -323,83 +432,8 @@ router.post('/', upload.single('audio'), async (req: Request, res: Response) => 
       }
     }
 
-    const whisperBin = await resolveWhisperBin();
-    if (!whisperBin) {
-      return res.status(500).json({
-        error: 'Whisper executable not found',
-        details:
-          'Install whisper.cpp CLI (macOS: brew install whisper-cpp) or build from source (requires cmake): cd backend/whisper.cpp && make build. Or set WHISPER_CPP_PATH to your whisper binary. Expected output: backend/whisper.cpp/build/bin/whisper-cli',
-      });
-    }
-
-    const modelPath =
-      process.env.WHISPER_MODEL_PATH ||
-      pickFirstExisting([
-        path.join(process.cwd(), 'models', 'ggml-base.en.bin'),
-        path.join(process.cwd(), 'whisper.cpp', 'models', 'ggml-base.en.bin'),
-      ]);
-
-    if (!modelPath) {
-      return res.status(500).json({
-        error: 'Whisper model not found',
-        details:
-          'Expected models/ggml-base.en.bin (or set WHISPER_MODEL_PATH). From the backend folder run: ./whisper.cpp/models/download-ggml-model.sh base.en ./models',
-      });
-    }
-
-    // whisper.cpp with -otxt writes `${input}.txt` by default.
     outputTxtPath = `${normalizedPath}.txt`;
-
-    const whisperArgs = [
-      '-m',
-      modelPath,
-      '-f',
-      normalizedPath,
-      '-l',
-      process.env.WHISPER_LANGUAGE || 'en',
-      '--no-timestamps',
-      '-otxt',
-    ];
-
-    logger.info('[transcribe] running whisper.cpp', { bin: whisperBin, args: whisperArgs.join(' ') });
-    const ws = await runCommand(whisperBin, whisperArgs, { timeoutMs: 240000 });
-
-    if (ws.code !== 0) {
-      logger.error('[transcribe] whisper failed', {
-        code: ws.code,
-        stderr: ws.stderr.slice(0, 2000),
-        stdout: ws.stdout.slice(0, 500),
-      });
-      return res.status(500).json({
-        error: 'whisper.cpp failed',
-        details: ws.stderr.slice(0, 2000) || ws.stdout.slice(0, 2000),
-      });
-    }
-
-    let transcript = extractTranscriptFromWhisperStdout(ws.stdout);
-    if (!transcript && outputTxtPath && fs.existsSync(outputTxtPath)) {
-      try {
-        transcript = fs.readFileSync(outputTxtPath, 'utf8').replace(/\s+/g, ' ').trim();
-      } catch {
-        // ignore
-      }
-    }
-
-    logger.info('[transcribe] whisper output', {
-      transcriptPreview: transcript ? transcript.slice(0, 120) : '',
-      stdoutBytes: ws.stdout.length,
-      stderrBytes: ws.stderr.length,
-    });
-
-    if (!transcript) {
-      return res.status(422).json({
-        error: 'Empty transcript',
-        details:
-          'Whisper returned no text. Check that audio contains speech and that ffmpeg normalization succeeded.',
-      });
-    }
-
-    return res.json({ transcript });
+    return transcribeNormalizedAudio(normalizedPath, res);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     logger.error('[transcribe] route failed', { error: message });

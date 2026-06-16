@@ -9,6 +9,7 @@
   "scripts": {
     "build": "prisma generate --schema=./prisma/schema.prisma && tsc",
     "start": "node dist/index.js",
+    "postinstall": "prisma generate --schema=./prisma/schema.prisma",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "lint": "eslint src --ext .ts",
     "test": "jest",
@@ -20,7 +21,7 @@
     "db:schema-scheduled": "node scripts/run-schema-scheduled.cjs"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "@types/multer": "^2.0.0",
@@ -47,7 +48,8 @@
     "uuid": "^9.0.1",
     "wav": "^1.0.2",
     "winston": "^3.11.0",
-    "@prisma/client": "5.17.0"
+    "@prisma/client": "5.17.0",
+    "prisma": "5.17.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.33",
@@ -62,7 +64,6 @@
     "@types/uuid": "^9.0.7",
     "@types/ws": "^8.18.1",
     "jest": "^29.7.0",
-    "prisma": "5.17.0",
     "ts-jest": "^29.1.1",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.3.3"

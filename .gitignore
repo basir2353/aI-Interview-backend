@@ -47,5 +47,8 @@ uploads
 temp
 tmp
 
+# Whisper models (download locally; too large for GitHub)
+models/*.bin
+
 # Misc
 *.pem

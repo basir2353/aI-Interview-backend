@@ -81,5 +81,12 @@ The backend also seeds candidate + competencies automatically on startup via `bo
 
 - **Build slow / fails on whisper.cpp** — First Docker build compiles whisper.cpp (~5–10 min). Subsequent builds cache layers.
 - **502 on startup** — Check deploy logs; DB bootstrap runs on boot and needs a valid `DATABASE_URL`.
-- **CORS / Socket.io** — Set `FRONTEND_URL` to your exact frontend origin.
+- **Signup / jobs return 500** — Database is not connected. Check `GET /health/db`:
+  - If `databaseUrlConfigured` is `false`, link Postgres to the backend: **Railway → backend service → Variables → Add reference → `DATABASE_URL`** from the PostgreSQL plugin.
+  - Redeploy the backend after linking. Tables are created automatically on boot.
+- **"Application failed to respond" (502)** — Usually a **port mismatch**:
+  - Railway routes traffic to **port 8080** (see Networking → Public domain).
+  - **Delete `PORT` from Railway variables** if it is set to `4000`. Railway injects `PORT=8080` automatically — do not override it.
+  - Redeploy after removing `PORT`. Then `GET /health` should return `{"status":"ok"}`.
+- **CORS / Socket.io** — Set `FRONTEND_URL` to your exact frontend origin (production: `https://a-i-interview-frontend.vercel.app`). For Vercel preview URLs, add `CORS_ORIGINS=https://your-preview.vercel.app`.
 - **Transcription timeout** — CPU transcription is slow; consider `STT_PROVIDER=openai` for faster cloud STT.

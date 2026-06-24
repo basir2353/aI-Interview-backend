@@ -3,7 +3,7 @@ import { body } from 'express-validator';
 import bcrypt from 'bcryptjs';
 import jwt, { type SignOptions } from 'jsonwebtoken';
 import crypto from 'crypto';
-import { query } from '../../db/client';
+import { query, formatDbError } from '../../db/client';
 import { validate } from '../middleware/validate';
 import { candidateAuthMiddleware } from '../middleware/auth';
 import { config } from '../../config';
@@ -80,7 +80,7 @@ router.post(
         },
       });
     } catch (e) {
-      console.error('Candidate signup error', e);
+      console.error('Candidate signup error', formatDbError(e));
       return res.status(500).json({ error: 'Failed to sign up' });
     }
   }

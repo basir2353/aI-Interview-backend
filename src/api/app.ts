@@ -34,17 +34,41 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/health/db', async (_req, res) => {
+  const { query, testDatabaseConnection, formatDbError } = await import('../db/client');
   try {
-    const { query } = await import('../db/client');
-    await query('SELECT 1');
-    const { rows } = await query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM positions WHERE COALESCE(is_active, true) = true`
+    await testDatabaseConnection();
+
+    const tables = await query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_name IN ('candidates', 'candidate_accounts', 'positions')
+       ORDER BY table_name`
     );
-    res.json({ status: 'ok', jobs: parseInt(rows[0]?.count ?? '0', 10) });
+    const names = new Set(tables.rows.map((r) => r.table_name));
+    const missing = ['candidates', 'candidate_accounts', 'positions'].filter((t) => !names.has(t));
+
+    let jobs = 0;
+    if (!missing.includes('positions')) {
+      const { rows } = await query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM positions WHERE COALESCE(is_active, true) = true`
+      );
+      jobs = parseInt(rows[0]?.count ?? '0', 10);
+    }
+
+    const hasDatabaseUrl = Boolean(process.env.DATABASE_URL || process.env.DATABASE_PRIVATE_URL);
+    res.json({
+      status: missing.length === 0 ? 'ok' : 'degraded',
+      jobs,
+      tables: [...names],
+      missingTables: missing.length > 0 ? missing : undefined,
+      databaseUrlConfigured: hasDatabaseUrl,
+    });
   } catch (e) {
     res.status(503).json({
       status: 'error',
-      message: e instanceof Error ? e.message : String(e),
+      message: formatDbError(e),
+      databaseUrlConfigured: Boolean(process.env.DATABASE_URL || process.env.DATABASE_PRIVATE_URL),
+      hint: 'Link PostgreSQL DATABASE_URL to the backend service in Railway → Variables.',
     });
   }
 });

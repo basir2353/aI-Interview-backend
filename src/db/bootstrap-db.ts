@@ -18,6 +18,10 @@ async function runStep(name: string, fn: () => Promise<void>): Promise<void> {
 export async function bootstrapDatabase(): Promise<void> {
   logger.info('Database bootstrap starting...');
 
+  await runStep('pgcrypto', async () => {
+    await query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+  });
+
   // 1. Users (no deps)
   await runStep('users', async () => {
     await query(`

@@ -10,6 +10,11 @@ let pool: Pool | null = null;
 export function getPool(): Pool {
   if (!pool) {
     const connectionString = config.database.url;
+    if (!connectionString) {
+      throw new Error(
+        'DATABASE_URL is not configured. Link PostgreSQL to the backend service in Railway → Variables.'
+      );
+    }
     const needsSsl =
       process.env.PGSSLMODE === 'require' ||
       /railway\.app|rlwy\.net/i.test(connectionString) ||
@@ -18,7 +23,7 @@ export function getPool(): Pool {
       connectionString,
       max: 20,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
+      connectionTimeoutMillis: 5000,
       ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
     });
     pool.on('error', (err: Error) => {
@@ -42,4 +47,20 @@ export async function closePool(): Promise<void> {
     await pool.end();
     pool = null;
   }
+}
+
+export function formatDbError(e: unknown): string {
+  if (e instanceof Error) {
+    const cause = (e as Error & { cause?: unknown }).cause;
+    const code = 'code' in e ? String((e as NodeJS.ErrnoException).code) : '';
+    const parts = [e.message, cause instanceof Error ? cause.message : ''].filter(Boolean);
+    const msg = parts.join(': ') || 'Database error';
+    return code ? `${msg} (${code})` : msg;
+  }
+  return String(e);
+}
+
+/** Quick connectivity check — used at startup and /health/db. */
+export async function testDatabaseConnection(): Promise<void> {
+  await query('SELECT 1');
 }

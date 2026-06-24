@@ -11,9 +11,34 @@ const PRODUCTION_FRONTEND = 'https://a-i-interview-frontend.vercel.app';
 const backendRoot = path.resolve(__dirname, '../..');
 dotenv.config({ path: path.join(backendRoot, '.env') });
 
+const nodeEnv = process.env.NODE_ENV || 'development';
+const onRailway = Boolean(
+  process.env.RAILWAY_ENVIRONMENT ||
+    process.env.RAILWAY_PROJECT_ID ||
+    process.env.RAILWAY_SERVICE_ID
+);
+const portFromEnv = process.env.PORT;
+if (onRailway && portFromEnv === '4000') {
+  console.error(
+    '[Config] PORT=4000 on Railway causes 502. Delete the PORT variable in Railway → backend → Variables. Railway uses port 8080.'
+  );
+}
+const defaultPort = onRailway ? '8080' : '4000';
+
+const databaseUrl =
+  process.env.DATABASE_URL ||
+  process.env.DATABASE_PRIVATE_URL ||
+  (nodeEnv === 'production' ? '' : 'postgresql://localhost:5432/ai_interviewer');
+
+if (nodeEnv === 'production' && !databaseUrl) {
+  console.error(
+    '[Config] DATABASE_URL is not set. In Railway: add PostgreSQL, then link DATABASE_URL to the backend service variables.'
+  );
+}
+
 export const config = {
-  env: process.env.NODE_ENV || 'development',
-  port: parseInt(process.env.PORT || '4000', 10),
+  env: nodeEnv,
+  port: parseInt(portFromEnv || defaultPort, 10),
   /** Bind address for HTTP server (0.0.0.0 required for Railway/Docker). */
   host: process.env.HOST || '0.0.0.0',
   apiPrefix: process.env.API_PREFIX || '/api/v1',
@@ -24,7 +49,9 @@ export const config = {
   },
 
   database: {
-    url: process.env.DATABASE_URL || 'postgresql://localhost:5432/ai_interviewer',
+    url:
+      databaseUrl ||
+      (nodeEnv !== 'production' ? 'postgresql://localhost:5432/ai_interviewer' : ''),
   },
 
   redis: {
@@ -63,7 +90,10 @@ export const config = {
 
   admin: {
     email: (process.env.ADMIN_EMAIL || 'admin@example.com').trim().toLowerCase(),
-    password: (process.env.ADMIN_PASSWORD || 'admin123').trim(),
+    password: (
+      process.env.ADMIN_PASSWORD ||
+      (nodeEnv === 'production' ? '' : 'admin123')
+    ).trim(),
   },
 
   /** HeyGen streaming avatar API key (https://app.heygen.com/settings?nav=API). */

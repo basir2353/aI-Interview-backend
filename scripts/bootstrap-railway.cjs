@@ -66,6 +66,8 @@ async function main() {
     await q(col);
   }
 
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS managed_by_admin_id UUID REFERENCES users(id) ON DELETE SET NULL;`);
+
   await q(`
     CREATE TABLE IF NOT EXISTS candidate_accounts (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

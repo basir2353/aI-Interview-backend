@@ -37,6 +37,7 @@ export async function bootstrapDatabase(): Promise<void> {
     await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'recruiter';`);
     await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;`);
     await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS permission_level VARCHAR(20) NOT NULL DEFAULT 'full';`);
+    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS managed_by_admin_id UUID REFERENCES users(id) ON DELETE SET NULL;`);
     await query(`CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);`);
     await query(`CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);`);
   });

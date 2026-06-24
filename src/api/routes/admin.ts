@@ -321,6 +321,51 @@ async function requireCanManageRecruiters(req: Request): Promise<boolean> {
   return allowed;
 }
 
+/** Resolve which admin owns a recruiter (super admin picks; others auto-assign self). */
+async function resolveManagedByAdminId(
+  req: Request,
+  requested: string | null | undefined
+): Promise<string | null> {
+  const email = ((req as Request & { user: { email?: string; sub: string } }).user?.email ??
+    (req as Request & { user: { sub: string } }).user?.sub) as string;
+
+  if (!isSuperAdminEmail(email)) {
+    const { rows } = await query<{ id: string }>(
+      `SELECT id FROM users WHERE email = $1 AND role = 'admin' LIMIT 1`,
+      [email.toLowerCase()]
+    );
+    return rows[0]?.id ?? null;
+  }
+
+  if (requested === undefined || requested === null || requested === '') {
+    return null;
+  }
+
+  const { rows } = await query<{ id: string }>(
+    `SELECT id FROM users WHERE id = $1 AND role = 'admin' LIMIT 1`,
+    [requested]
+  );
+  if (rows.length === 0) {
+    throw new Error('Invalid managing admin');
+  }
+  return requested;
+}
+
+const recruiterListSelect = `
+  SELECT u.id, u.email, u.name, u.created_at, u.is_active,
+         COALESCE(u.permission_level, 'full') AS permission_level,
+         u.managed_by_admin_id,
+         mgr.email AS managed_by_email,
+         mgr.name AS managed_by_name,
+         COUNT(s.id)::text AS schedule_count
+  FROM users u
+  LEFT JOIN scheduled_interviews s ON s.created_by = u.id
+  LEFT JOIN users mgr ON mgr.id = u.managed_by_admin_id
+  WHERE u.role = 'recruiter'
+  GROUP BY u.id, u.email, u.name, u.created_at, u.is_active, u.permission_level,
+           u.managed_by_admin_id, mgr.email, mgr.name
+  ORDER BY u.created_at DESC`;
+
 /** POST /admin/recruiters - Admin creates recruiter account (super admin or full-access admin) */
 router.post(
   '/recruiters',
@@ -329,6 +374,9 @@ router.post(
     body('email').isEmail(),
     body('name').optional().isString(),
     body('password').isString().isLength({ min: 6 }),
+    body('managedByAdminId')
+      .optional({ values: 'null' })
+      .custom((value) => value === null || (typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value))),
   ]),
   async (req: Request, res: Response) => {
     if (!(await requireCanManageRecruiters(req))) {
@@ -339,15 +387,19 @@ router.post(
       const name = req.body.name ? String(req.body.name) : null;
       const password = String(req.body.password);
       const passwordHash = await bcrypt.hash(password, 10);
+      const managedByAdminId = await resolveManagedByAdminId(req, req.body.managedByAdminId as string | null | undefined);
       const { rows } = await query<{ id: string; email: string; name: string | null; role: string; is_active: boolean }>(
-        `INSERT INTO users (id, email, password_hash, name, role, is_active, created_at, updated_at)
-         VALUES (gen_random_uuid(), $1, $2, $3, 'recruiter', true, NOW(), NOW())
+        `INSERT INTO users (id, email, password_hash, name, role, is_active, managed_by_admin_id, created_at, updated_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, 'recruiter', true, $4, NOW(), NOW())
          RETURNING id, email, name, role, is_active`,
-        [email, passwordHash, name]
+        [email, passwordHash, name, managedByAdminId]
       );
       return res.status(201).json({ recruiter: rows[0] });
     } catch (e) {
       const err = e as Error;
+      if (err.message === 'Invalid managing admin') {
+        return res.status(400).json({ error: err.message });
+      }
       if ('code' in (e as Record<string, unknown>) && (e as { code?: string }).code === '23505') {
         return res.status(409).json({ error: 'Recruiter email already exists' });
       }
@@ -371,14 +423,10 @@ router.get('/recruiters', adminAuthMiddleware, async (req: Request, res: Respons
       schedule_count: string;
       is_active: boolean;
       permission_level: string;
-    }>(
-      `SELECT u.id, u.email, u.name, u.created_at, u.is_active, COALESCE(u.permission_level, 'full') AS permission_level, COUNT(s.id)::text AS schedule_count
-       FROM users u
-       LEFT JOIN scheduled_interviews s ON s.created_by = u.id
-       WHERE u.role = 'recruiter'
-       GROUP BY u.id, u.email, u.name, u.created_at, u.is_active, u.permission_level
-       ORDER BY u.created_at DESC`
-    );
+      managed_by_admin_id: string | null;
+      managed_by_email: string | null;
+      managed_by_name: string | null;
+    }>(recruiterListSelect);
     return res.json({ recruiters: rows });
   } catch (e) {
     console.error('Admin list recruiters error', e);
@@ -396,6 +444,9 @@ router.patch(
     body('name').optional().isString(),
     body('permissionLevel').optional().isIn(['full', 'limited']),
     body('password').optional().isString().isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+    body('managedByAdminId')
+      .optional({ values: 'null' })
+      .custom((value) => value === null || (typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value))),
   ]),
   async (req: Request, res: Response) => {
     if (!(await requireCanManageRecruiters(req))) {
@@ -403,11 +454,12 @@ router.patch(
     }
     try {
       const { id } = req.params;
-      const { isActive, name, permissionLevel, password } = req.body as {
+      const { isActive, name, permissionLevel, password, managedByAdminId } = req.body as {
         isActive?: boolean;
         name?: string;
         permissionLevel?: 'full' | 'limited';
         password?: string;
+        managedByAdminId?: string | null;
       };
       const updates: string[] = [];
       const params: unknown[] = [];
@@ -431,6 +483,25 @@ router.patch(
         const passwordHash = await bcrypt.hash(password, 10);
         updates.push(`password_hash = $${i}`);
         params.push(passwordHash);
+        i++;
+      }
+      if (managedByAdminId !== undefined) {
+        const currentEmail = ((req as Request & { user: { email?: string; sub: string } }).user?.email ??
+          (req as Request & { user: { sub: string } }).user?.sub) as string;
+        if (!isSuperAdminEmail(currentEmail)) {
+          return res.status(403).json({ error: 'Only super admin can change managing admin' });
+        }
+        if (managedByAdminId !== null) {
+          const { rows: adminRows } = await query<{ id: string }>(
+            `SELECT id FROM users WHERE id = $1 AND role = 'admin' LIMIT 1`,
+            [managedByAdminId]
+          );
+          if (adminRows.length === 0) {
+            return res.status(400).json({ error: 'Invalid managing admin' });
+          }
+        }
+        updates.push(`managed_by_admin_id = $${i}`);
+        params.push(managedByAdminId);
         i++;
       }
       if (updates.length === 0) {

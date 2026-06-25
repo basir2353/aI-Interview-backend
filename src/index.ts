@@ -69,10 +69,12 @@ async function initializeServices(io: SocketIOServer): Promise<void> {
     logger.warn('Positions setup failed:', (e as Error).message);
   }
 
-  if (!config.ai.openRouterApiKey) {
+  if (config.ai.llmProvider === 'ollama') {
     const ollamaHealthy = await llmService.healthCheck();
     if (!ollamaHealthy) {
-      logger.warn('Ollama is not accessible. Please ensure Ollama is running: ollama serve');
+      logger.warn(
+        `Ollama is not accessible at ${config.ai.ollamaBaseUrl}. Pull a model on the Ollama service (e.g. ollama pull ${config.ai.ollamaModel}).`
+      );
     }
   } else {
     logger.info('OpenRouter configured; skipping Ollama health check');

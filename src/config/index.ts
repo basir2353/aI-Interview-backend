@@ -62,12 +62,17 @@ export const config = {
   ai: {
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-    /** Open Router API key – used for interviewer (role-based questions) when set. https://openrouter.ai */
+    /** `ollama` | `openrouter` — explicit pick; otherwise openrouter when OPENROUTER_API_KEY is set. */
+    llmProvider: (() => {
+      const explicit = (process.env.LLM_PROVIDER || '').toLowerCase();
+      if (explicit === 'ollama' || explicit === 'openrouter') return explicit;
+      return process.env.OPENROUTER_API_KEY ? 'openrouter' : 'ollama';
+    })() as 'ollama' | 'openrouter',
     openRouterApiKey: process.env.OPENROUTER_API_KEY || '',
-    /** AICC API key – optional, for voice/TTS or other services when set. */
     aiccApiKey: process.env.AICC_API_KEY || '',
-    /** Open Router model (e.g. openai/gpt-4o, anthropic/claude-3-haiku). */
     openRouterModel: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+    ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+    ollamaModel: process.env.OLLAMA_MODEL || 'llama3.2',
     defaultTemperature: 0.4,
     maxContextTokens: 12000,
   },

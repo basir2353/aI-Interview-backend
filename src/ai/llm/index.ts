@@ -1,6 +1,6 @@
 /**
- * Single LLM provider export. Prefers Open Router when OPENROUTER_API_KEY is set (role-based interviewer);
- * otherwise uses Ollama for local LLM.
+ * Single LLM provider export. Set LLM_PROVIDER=ollama|openrouter, or defaults to
+ * OpenRouter when OPENROUTER_API_KEY is set, otherwise Ollama.
  */
 import type { ILLMService, LLMMessage, LLMOptions, LLMResponse } from './types';
 import { config } from '../../config';
@@ -20,7 +20,7 @@ let instance: ILLMService | null = null;
 
 export function getLLMService(): ILLMService {
   if (!instance) {
-    if (config.ai.openRouterApiKey) {
+    if (config.ai.llmProvider === 'openrouter') {
       instance = new OpenRouterLLMService();
     } else {
       instance = new OllamaLLMServiceWrapper();

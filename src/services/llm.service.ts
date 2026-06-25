@@ -44,8 +44,8 @@ export class LLMService {
     private modelAvailable: boolean = true;
 
     constructor() {
-        this.baseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-        this.model = process.env.OLLAMA_MODEL || 'llama3';
+        this.baseUrl = config.ai.ollamaBaseUrl.replace(/\/$/, '');
+        this.model = config.ai.ollamaModel;
         this.temperature = parseFloat(process.env.OLLAMA_TEMPERATURE || '0.7');
         this.maxTokens = parseInt(process.env.OLLAMA_MAX_TOKENS || '500');
     }

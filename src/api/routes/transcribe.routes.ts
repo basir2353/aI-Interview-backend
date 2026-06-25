@@ -262,6 +262,52 @@ function extractTranscriptFromWhisperStdout(stdout: string): string {
     .trim();
 }
 
+function assertReadableAudioFile(filePath: string): void {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Audio file missing before transcription: ${filePath}`);
+  }
+  const stat = fs.statSync(filePath);
+  if (stat.size < 44) {
+    throw new Error(`Audio file too small (${stat.size} bytes): ${filePath}`);
+  }
+}
+
+async function normalizeUploadedAudio(inputPath: string): Promise<string> {
+  if (isWhisperReadyWav16kMonoPcmS16le(inputPath)) {
+    logger.info('[transcribe] using uploaded 16kHz mono WAV directly', { inputPath });
+    return inputPath;
+  }
+
+  if (!hasFfmpeg()) {
+    throw new Error(
+      'ffmpeg not found and uploaded audio is not a 16kHz mono 16-bit PCM WAV. Install ffmpeg or upload a 16kHz mono WAV.'
+    );
+  }
+
+  const normalizedPath = path.join(os.tmpdir(), `uploaded_${Date.now()}_16k_mono.wav`);
+  const ffmpegArgs = [
+    '-y',
+    '-i',
+    inputPath,
+    '-ar',
+    '16000',
+    '-ac',
+    '1',
+    '-c:a',
+    'pcm_s16le',
+    normalizedPath,
+  ];
+
+  logger.info('[transcribe] running ffmpeg', { args: ffmpegArgs.join(' ') });
+  const ff = await runCommand('ffmpeg', ffmpegArgs, { timeoutMs: 60000 });
+  if (ff.code !== 0) {
+    throw new Error(`ffmpeg conversion failed: ${ff.stderr.slice(0, 2000) || ff.stdout.slice(0, 2000)}`);
+  }
+
+  assertReadableAudioFile(normalizedPath);
+  return normalizedPath;
+}
+
 async function transcribeWithOpenAI(filePath: string): Promise<string> {
   const service = new OpenAISTTService();
   const buffer = fs.readFileSync(filePath);
@@ -269,6 +315,8 @@ async function transcribeWithOpenAI(filePath: string): Promise<string> {
 }
 
 async function transcribeNormalizedAudio(normalizedPath: string, res: Response): Promise<Response> {
+  assertReadableAudioFile(normalizedPath);
+
   if (config.stt.provider === 'openai') {
     if (!config.ai.openaiApiKey) {
       return res.status(500).json({
@@ -400,46 +448,11 @@ router.post('/', upload.single('audio'), async (req: Request, res: Response) => 
       return res.status(400).json({ error: 'No audio detected (empty upload)' });
     }
 
-    // Normalize to 16kHz mono PCM_s16le for whisper.cpp.
-    // If ffmpeg isn't installed, allow already-normalized WAVs (our frontend generates these).
-    if (!hasFfmpeg()) {
-      if (!isWhisperReadyWav16kMonoPcmS16le(inputPath)) {
-        return res.status(500).json({
-          error: 'Transcription failed',
-          details:
-            'ffmpeg not found and uploaded audio is not a 16kHz mono 16-bit PCM WAV. Install ffmpeg (macOS: brew install ffmpeg) or upload a 16kHz mono WAV.',
-        });
-      }
-      normalizedPath = inputPath;
-      logger.info('[transcribe] ffmpeg missing; using uploaded WAV directly', { normalizedPath });
-    } else {
-      normalizedPath = path.join(os.tmpdir(), `uploaded_${Date.now()}_16k_mono.wav`);
-      const ffmpegArgs = [
-        '-y',
-        '-i',
-        inputPath,
-        '-ar',
-        '16000',
-        '-ac',
-        '1',
-        '-c:a',
-        'pcm_s16le',
-        normalizedPath,
-      ];
-
-      logger.info('[transcribe] running ffmpeg', { args: ffmpegArgs.join(' ') });
-      const ff = await runCommand('ffmpeg', ffmpegArgs, { timeoutMs: 60000 });
-      if (ff.code !== 0) {
-        logger.error('[transcribe] ffmpeg failed', { code: ff.code, stderr: ff.stderr.slice(0, 2000) });
-        return res.status(500).json({
-          error: 'ffmpeg conversion failed',
-          details: ff.stderr.slice(0, 2000),
-        });
-      }
-    }
+    // Normalize to 16kHz mono PCM_s16le for whisper.cpp (skip ffmpeg when frontend already sends WAV).
+    normalizedPath = await normalizeUploadedAudio(inputPath);
 
     outputTxtPath = `${normalizedPath}.txt`;
-    return transcribeNormalizedAudio(normalizedPath, res);
+    return await transcribeNormalizedAudio(normalizedPath, res);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     logger.error('[transcribe] route failed', { error: message });
@@ -448,9 +461,11 @@ router.post('/', upload.single('audio'), async (req: Request, res: Response) => 
       details: message,
     });
   } finally {
-    // Cleanup temp files
-    for (const p of [inputPath, normalizedPath, outputTxtPath]) {
-      if (!p) continue;
+    const toDelete = new Set<string>();
+    if (inputPath) toDelete.add(inputPath);
+    if (normalizedPath) toDelete.add(normalizedPath);
+    if (outputTxtPath) toDelete.add(outputTxtPath);
+    for (const p of toDelete) {
       try {
         if (fs.existsSync(p)) fs.unlinkSync(p);
       } catch {

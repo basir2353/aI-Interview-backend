@@ -109,6 +109,16 @@ export const config = {
     process.env.FRONTEND_URL ||
     (process.env.NODE_ENV === 'production' ? PRODUCTION_FRONTEND : 'http://localhost:3000'),
 
+  /** Public backend URL for fetching uploaded files (resumes) when not on local disk. */
+  publicUrl: (() => {
+    const explicit = (process.env.BACKEND_URL || process.env.PUBLIC_BACKEND_URL || '').replace(/\/$/, '');
+    if (explicit) return explicit;
+    const railway = process.env.RAILWAY_PUBLIC_DOMAIN;
+    if (railway) return `https://${railway.replace(/^https?:\/\//, '')}`;
+    if (process.env.NODE_ENV === 'production') return '';
+    return `http://localhost:${parseInt(process.env.PORT || defaultPort, 10)}`;
+  })(),
+
   /** Avatar pipeline (SadTalker + Wav2Lip + Coqui TTS). When enabled, AI interviewer replies can include a talking-head video. */
   avatar: {
     enabled: String(process.env.AVATAR_ENABLED || 'false').toLowerCase() === 'true',

@@ -7,6 +7,7 @@
  */
 
 import { getLLMService } from '../../ai/llm';
+import { extractInterviewerReply } from '../../ai/llm/extractReply';
 import { SYSTEM_PROMPT_INTERVIEWER, buildInterviewerContext } from '../../ai/prompts';
 import { interviewSessionService } from './InterviewSessionService';
 import { conversationManager } from './ConversationManager';
@@ -15,6 +16,8 @@ import { evaluationEngine } from './EvaluationEngine';
 import { scoringReportService } from './ScoringReportService';
 import { avatarService } from '../avatar/avatar.service';
 import type { InterviewState, InterviewReport } from '../../types';
+
+const LLM_INTERVIEW_TIMEOUT_MS = 45000;
 
 export interface SubmitAnswerInput {
   interviewId: string;
@@ -254,11 +257,13 @@ export class AIInterviewerOrchestrator {
     ];
     const llm = getLLMService();
     try {
-      const response = await llm.chat(messages, { temperature: 0.4, maxTokens: 320, timeoutMs: 10000 });
-      const raw = (response.content || '').replace(/```json?\s*/g, '').trim();
-      const parsed = JSON.parse(raw);
-      if (typeof parsed.reply === 'string' && parsed.reply.length > 0) return parsed.reply.trim();
-      if (raw.length > 15 && !raw.startsWith('{')) return raw;
+      const response = await llm.chat(messages, {
+        temperature: 0.4,
+        maxTokens: 512,
+        timeoutMs: LLM_INTERVIEW_TIMEOUT_MS,
+      });
+      const reply = extractInterviewerReply(response.content || '', '');
+      if (reply) return reply;
     } catch {
       // fallback to template question
     }
@@ -313,16 +318,13 @@ Analyze the candidate's answer. Your reply must: (1) Show you understood by refe
     ];
 
     const llm = getLLMService();
-    const response = await llm.chat(messages, { temperature: 0.4, maxTokens: 320, timeoutMs: 10000 });
-    const raw = (response.content || '').replace(/```json?\s*/g, '').trim();
-    try {
-      const parsed = JSON.parse(raw);
-      if (typeof parsed.reply === 'string' && parsed.reply.length > 0) return parsed.reply;
-    } catch {
-      // LLM returned plain text instead of JSON; use it as the reply if it looks like speech
-      if (raw.length > 15 && !raw.startsWith('{')) return raw;
-    }
-    return questionText;
+    const response = await llm.chat(messages, {
+      temperature: 0.4,
+      maxTokens: 512,
+      timeoutMs: LLM_INTERVIEW_TIMEOUT_MS,
+    });
+    const reply = extractInterviewerReply(response.content || '', questionText);
+    return reply || questionText;
   }
 
   /**

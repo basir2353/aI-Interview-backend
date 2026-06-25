@@ -1,6 +1,9 @@
 import OpenAI from 'openai';
 import type { ILLMService, LLMMessage, LLMOptions, LLMResponse } from './types';
 import { config } from '../../config';
+import { extractInterviewerReply } from './extractReply';
+
+const DEFAULT_TIMEOUT_MS = 45000;
 
 /**
  * LLM service using Open Router (https://openrouter.ai).
@@ -16,30 +19,42 @@ export class OpenRouterLLMService implements ILLMService {
     this.client = new OpenAI({
       apiKey: config.ai.openRouterApiKey,
       baseURL: 'https://openrouter.ai/api/v1',
-      timeout: 12000,
-      maxRetries: 0,
+      timeout: DEFAULT_TIMEOUT_MS,
+      maxRetries: 1,
+      defaultHeaders: {
+        'HTTP-Referer': config.frontendUrl,
+        'X-Title': 'AI Interview',
+      },
     });
   }
 
   private fallbackResponse(messages: LLMMessage[]): LLMResponse {
     const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
-    const match = lastUser.match(/Next question to ask(?:\s*\([^)]*\))?:\s*(.+)$/s);
-    let question = 'Could you tell me more about your experience?';
+    const answerMatch = lastUser.match(/The candidate (?:answered|just said):\s*"([^"]+)"/s);
+    const answerSnippet = answerMatch?.[1]?.trim();
 
-    if (match) {
-      question = match[1].trim();
+    let question = 'Could you tell me more about your experience?';
+    const nextQ = lastUser.match(/Next question to ask(?:\s*\([^)]*\))?:\s*(.+)$/s);
+    if (nextQ) {
+      question = nextQ[1].trim();
     } else if (/first interview question/i.test(lastUser)) {
-      question = 'Tell me a bit about your background and what drew you to this role.';
-    } else if (/next interview question/i.test(lastUser)) {
-      question = 'Thanks for sharing. Can you give a specific example from your recent work?';
+      question = 'Tell me about a project from your resume that best shows your strengths for this role.';
+    } else if (answerSnippet) {
+      question = `Thanks for sharing about "${answerSnippet.slice(0, 80)}${answerSnippet.length > 80 ? '…' : ''}". Can you walk me through your specific contribution and the outcome?`;
     }
 
+    const reply = extractInterviewerReply(
+      JSON.stringify({ reply: question, intent: 'next_question', suggestedNextPhase: null }),
+      question
+    );
+
     return {
-      content: question,
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-      },
+      content: JSON.stringify({
+        reply,
+        intent: 'next_question',
+        suggestedNextPhase: null,
+      }),
+      usage: { promptTokens: 0, completionTokens: 0 },
     };
   }
 
@@ -58,7 +73,7 @@ export class OpenRouterLLMService implements ILLMService {
         max_tokens: options?.maxTokens ?? 1024,
       });
 
-      const timeoutMs = options?.timeoutMs ?? 12000;
+      const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       const completion = await Promise.race([
         completionPromise,
         new Promise<never>((_, reject) =>
@@ -95,7 +110,11 @@ export class OpenRouterLLMService implements ILLMService {
       }
       if (!this.requestErrorLogged) {
         this.requestErrorLogged = true;
-        console.warn('OpenRouter request failed. Falling back to deterministic interviewer questions.');
+        console.warn('OpenRouter request failed. Falling back to deterministic interviewer questions.', {
+          status,
+          message,
+          detail: error?.error ?? error?.response?.data,
+        });
       }
       return this.fallbackResponse(messages);
     }

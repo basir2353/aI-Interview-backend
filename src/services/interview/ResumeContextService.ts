@@ -3,6 +3,7 @@ import path from 'path';
 import { URL } from 'url';
 import { PDFParse } from 'pdf-parse';
 import mammoth from 'mammoth';
+import { config } from '../../config';
 
 export async function buildResumeContext(input: {
   resumeUrl?: string | null;
@@ -28,14 +29,13 @@ export async function buildResumeContext(input: {
 
 async function readResumeText(resumeUrl?: string | null): Promise<string> {
   if (!resumeUrl) return '';
-  const localPath = resolveLocalResumePath(resumeUrl);
-  if (!localPath) return '';
+  const buffer = await loadResumeBuffer(resumeUrl);
+  if (!buffer) return '';
 
-  const ext = path.extname(localPath).toLowerCase();
+  const ext = path.extname(resumeUrl.split('?')[0]).toLowerCase();
   try {
-    const fileBuffer = await fs.readFile(localPath);
     if (ext === '.pdf') {
-      const parser = new PDFParse({ data: fileBuffer });
+      const parser = new PDFParse({ data: buffer });
       try {
         const result = await parser.getText();
         return cleanText(result.text).slice(0, 3500);
@@ -44,11 +44,11 @@ async function readResumeText(resumeUrl?: string | null): Promise<string> {
       }
     }
     if (ext === '.docx') {
-      const parsed = await mammoth.extractRawText({ buffer: fileBuffer });
+      const parsed = await mammoth.extractRawText({ buffer });
       return cleanText(parsed.value).slice(0, 3500);
     }
     if (ext === '.txt' || ext === '.md') {
-      return cleanText(fileBuffer.toString('utf8')).slice(0, 3500);
+      return cleanText(buffer.toString('utf8')).slice(0, 3500);
     }
   } catch (e) {
     console.warn('[ResumeContext] Unable to parse resume:', e instanceof Error ? e.message : e);
@@ -56,15 +56,61 @@ async function readResumeText(resumeUrl?: string | null): Promise<string> {
   return '';
 }
 
-function resolveLocalResumePath(resumeUrl: string): string | null {
+async function loadResumeBuffer(resumeUrl: string): Promise<Buffer | null> {
+  const localPath = resolveLocalResumePath(resumeUrl);
+  if (localPath) {
+    try {
+      await fs.access(localPath);
+      return fs.readFile(localPath);
+    } catch {
+      // try HTTP below (Railway / ephemeral disk)
+    }
+  }
+
+  const fetchUrl = toAbsoluteResumeUrl(resumeUrl);
+  if (!fetchUrl) return null;
+
   try {
-    const parsed = new URL(resumeUrl);
-    if (!parsed.pathname.startsWith('/uploads/resumes/')) return null;
-    const fileName = path.basename(parsed.pathname);
-    return path.resolve(process.cwd(), 'uploads', 'resumes', fileName);
-  } catch {
+    const res = await fetch(fetchUrl);
+    if (!res.ok) {
+      console.warn('[ResumeContext] HTTP fetch failed:', res.status, fetchUrl);
+      return null;
+    }
+    return Buffer.from(await res.arrayBuffer());
+  } catch (e) {
+    console.warn('[ResumeContext] Unable to fetch resume:', e instanceof Error ? e.message : e);
     return null;
   }
+}
+
+function resolveLocalResumePath(resumeUrl: string): string | null {
+  let pathname: string | null = null;
+  if (resumeUrl.startsWith('/uploads/resumes/')) {
+    pathname = resumeUrl;
+  } else {
+    try {
+      const parsed = new URL(resumeUrl);
+      if (parsed.pathname.startsWith('/uploads/resumes/')) pathname = parsed.pathname;
+    } catch {
+      return null;
+    }
+  }
+  if (!pathname) return null;
+  const fileName = path.basename(pathname);
+  return path.resolve(process.cwd(), 'uploads', 'resumes', fileName);
+}
+
+function toAbsoluteResumeUrl(resumeUrl: string): string | null {
+  if (resumeUrl.startsWith('http://') || resumeUrl.startsWith('https://')) return resumeUrl;
+  if (resumeUrl.startsWith('/uploads/resumes/')) {
+    const base = config.publicUrl?.replace(/\/$/, '');
+    if (!base) {
+      console.warn('[ResumeContext] BACKEND_URL not set; cannot fetch', resumeUrl);
+      return null;
+    }
+    return `${base}${resumeUrl}`;
+  }
+  return null;
 }
 
 function cleanText(value: string): string {
@@ -92,7 +138,6 @@ export function computeResumeJobMatchScore(jobText: string, resumeText: string):
     if (resumeWords.has(w)) hit++;
   }
   const raw = (hit / jobWords.size) * 100;
-  // Scale up so good matches (e.g. 67% keyword overlap) display as ~80%, cap at 100
   const boosted = Math.min(100, Math.round(raw * 1.2));
   return boosted;
 }

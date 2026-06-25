@@ -308,44 +308,59 @@ async function normalizeUploadedAudio(inputPath: string): Promise<string> {
   return normalizedPath;
 }
 
-async function transcribeWithOpenAI(filePath: string): Promise<string> {
+async function transcribeWithRemoteStt(filePath: string): Promise<string> {
   const service = new OpenAISTTService();
   const buffer = fs.readFileSync(filePath);
   return service.transcribe(buffer);
 }
 
+function remoteSttConfigured(): boolean {
+  const { baseUrl, apiKey } = config.stt.remote;
+  return Boolean(baseUrl || apiKey || config.ai.openaiApiKey);
+}
+
+function remoteSttLabel(): string {
+  return config.stt.provider === 'speaches' || config.stt.remote.baseUrl ? 'Speaches' : 'OpenAI Whisper API';
+}
+
 async function transcribeNormalizedAudio(normalizedPath: string, res: Response): Promise<Response> {
   assertReadableAudioFile(normalizedPath);
 
-  if (config.stt.provider === 'openai') {
-    if (!config.ai.openaiApiKey) {
+  if (config.stt.provider === 'openai' || config.stt.provider === 'speaches') {
+    if (!remoteSttConfigured()) {
       return res.status(500).json({
-        error: 'OpenAI STT not configured',
-        details: 'Set STT_PROVIDER=openai and OPENAI_API_KEY in Railway variables.',
+        error: 'Remote STT not configured',
+        details:
+          config.stt.provider === 'speaches'
+            ? 'Set STT_PROVIDER=speaches, SPEACHES_BASE_URL (Railway URL), and SPEACHES_API_KEY.'
+            : 'Set STT_PROVIDER=openai and OPENAI_API_KEY, or use Speaches with SPEACHES_BASE_URL.',
       });
     }
-    logger.info('[transcribe] using OpenAI Whisper API');
-    const transcript = (await transcribeWithOpenAI(normalizedPath)).trim();
+    logger.info(`[transcribe] using ${remoteSttLabel()}`, {
+      baseUrl: config.stt.remote.baseUrl || '(OpenAI default)',
+      model: config.stt.remote.model,
+    });
+    const transcript = (await transcribeWithRemoteStt(normalizedPath)).trim();
     if (!transcript) {
-      return res.status(422).json({ error: 'Empty transcript', details: 'OpenAI returned no text.' });
+      return res.status(422).json({ error: 'Empty transcript', details: 'STT returned no text.' });
     }
     return res.json({ transcript });
   }
 
   const whisperBin = await resolveWhisperBin();
   if (!whisperBin) {
-    if (config.ai.openaiApiKey) {
-      logger.warn('[transcribe] whisper.cpp unavailable; falling back to OpenAI Whisper API');
-      const transcript = (await transcribeWithOpenAI(normalizedPath)).trim();
+    if (remoteSttConfigured()) {
+      logger.warn('[transcribe] whisper.cpp unavailable; falling back to remote STT');
+      const transcript = (await transcribeWithRemoteStt(normalizedPath)).trim();
       if (!transcript) {
-        return res.status(422).json({ error: 'Empty transcript', details: 'OpenAI returned no text.' });
+        return res.status(422).json({ error: 'Empty transcript', details: 'STT returned no text.' });
       }
       return res.json({ transcript });
     }
     return res.status(500).json({
       error: 'Whisper executable not found',
       details:
-        'Install whisper.cpp CLI (macOS: brew install whisper-cpp) or set STT_PROVIDER=openai with OPENAI_API_KEY for cloud transcription.',
+        'Install whisper.cpp CLI, deploy Speaches on Railway (STT_PROVIDER=speaches), or set STT_PROVIDER=openai with OPENAI_API_KEY.',
     });
   }
 
@@ -386,9 +401,9 @@ async function transcribeNormalizedAudio(normalizedPath: string, res: Response):
       stderr: errOut.slice(0, 2000),
       stdout: ws.stdout.slice(0, 500),
     });
-    if (config.ai.openaiApiKey && /shared libraries|libwhisper|ENOENT|cannot open shared object/i.test(errOut)) {
-      logger.warn('[transcribe] whisper.cpp broken at runtime; falling back to OpenAI Whisper API');
-      const transcript = (await transcribeWithOpenAI(normalizedPath)).trim();
+    if (remoteSttConfigured() && /shared libraries|libwhisper|ENOENT|cannot open shared object/i.test(errOut)) {
+      logger.warn('[transcribe] whisper.cpp broken at runtime; falling back to remote STT');
+      const transcript = (await transcribeWithRemoteStt(normalizedPath)).trim();
       if (transcript) return res.json({ transcript });
     }
     return res.status(500).json({

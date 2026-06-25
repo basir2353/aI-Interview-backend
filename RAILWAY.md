@@ -79,8 +79,11 @@ Railway sets `PORT` and `DATABASE_URL` automatically — do not override `PORT`.
 | Variable | Description |
 |----------|-------------|
 | `REDIS_URL` | Add Railway Redis plugin for session persistence (defaults to in-memory) |
-| `STT_PROVIDER` | `local` (default, whisper.cpp in Docker) or `openai` (uses `OPENAI_API_KEY`) |
-| `OPENAI_API_KEY` | Required when `STT_PROVIDER=openai` |
+| `STT_PROVIDER` | `local` (whisper.cpp in Docker), `speaches` (Railway Speaches), or `openai` |
+| `SPEACHES_BASE_URL` | Speaches Railway URL, e.g. `https://speaches-xxx.up.railway.app` |
+| `SPEACHES_API_KEY` | Same as `API_KEY` you set on the Speaches service |
+| `SPEACHES_MODEL` | Default `Systran/faster-distil-whisper-small.en` |
+| `OPENAI_API_KEY` | OpenAI Whisper when `STT_PROVIDER=openai` |
 | `MAIL_*` | Email settings for interview invites |
 
 ## After deploy
@@ -105,7 +108,29 @@ Redeploy the frontend so `/api/transcribe` proxies to Railway.
 |---------|-------|------------------|
 | PostgreSQL | Local Postgres | Railway Postgres plugin |
 | LLM | Ollama or OpenRouter | Ollama template or OpenRouter |
-| STT | brew install whisper-cpp | Built into Docker image |
+| STT | brew install whisper-cpp | Built into Docker image, or Speaches on Railway |
+
+## Speaches STT (recommended for production)
+
+Deploy **Speaches** from Railway templates (search “Speaches” — pick the one with OpenAI-compatible API, ~100% health).
+
+1. Deploy Speaches in the same Railway project.
+2. Set a strong `API_KEY` on the Speaches service.
+3. Open the Speaches URL → test transcription in the Gradio UI.
+4. On your **backend** service, set:
+
+```env
+STT_PROVIDER=speaches
+SPEACHES_BASE_URL=https://your-speaches.up.railway.app
+SPEACHES_API_KEY=<same API_KEY as Speaches service>
+SPEACHES_MODEL=Systran/faster-distil-whisper-small.en
+```
+
+5. Redeploy the backend. No frontend changes — audio still goes to `/api/transcribe` on your backend.
+
+**Why Speaches?** Faster than whisper.cpp on CPU, models cache on a volume, OpenAI-compatible API, and you can remove heavy STT from the backend image over time.
+
+**Note:** Your transcript already works with built-in whisper.cpp. The “Failed to submit answer” error is from the **LLM** (Ollama/OpenRouter), not STT — fix `LLM_PROVIDER=openrouter` first.
 | Redis | Optional local | Optional Railway Redis plugin |
 
 ## Re-seed the database

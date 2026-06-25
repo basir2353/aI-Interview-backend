@@ -77,9 +77,30 @@ export const config = {
     maxContextTokens: 12000,
   },
 
-  /** Speech-to-text: local (whisper.cpp) or openai (Whisper API – lighter for cloud). */
+  /** Speech-to-text: local whisper.cpp, OpenAI Whisper API, or Speaches (OpenAI-compatible on Railway). */
   stt: {
-    provider: (process.env.STT_PROVIDER || 'local').toLowerCase() as 'local' | 'openai',
+    provider: (() => {
+      const p = (process.env.STT_PROVIDER || 'local').toLowerCase();
+      if (p === 'speaches' || p === 'openai' || p === 'local') return p;
+      return 'local';
+    })() as 'local' | 'openai' | 'speaches',
+    /** Remote STT (OpenAI or Speaches): POST /v1/audio/transcriptions */
+    remote: {
+      baseUrl:
+        process.env.SPEACHES_BASE_URL ||
+        process.env.STT_BASE_URL ||
+        process.env.OPENAI_BASE_URL ||
+        '',
+      apiKey:
+        process.env.SPEACHES_API_KEY ||
+        process.env.STT_API_KEY ||
+        process.env.OPENAI_API_KEY ||
+        '',
+      model:
+        process.env.SPEACHES_MODEL ||
+        process.env.STT_MODEL ||
+        'Systran/faster-distil-whisper-small.en',
+    },
   },
 
   storage: {

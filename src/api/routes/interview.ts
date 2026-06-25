@@ -95,8 +95,12 @@ router.post(
         report: result.report,
       });
     } catch (e) {
-      console.error('Submit answer error', e);
-      res.status(500).json({ error: 'Failed to submit answer' });
+      const message = e instanceof Error ? e.message : String(e);
+      console.error('Submit answer error', message, e);
+      res.status(500).json({
+        error: 'Failed to submit answer',
+        ...(process.env.NODE_ENV !== 'production' ? { details: message } : {}),
+      });
     }
   }
 );

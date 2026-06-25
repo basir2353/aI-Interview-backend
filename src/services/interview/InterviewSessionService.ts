@@ -117,7 +117,7 @@ export class InterviewSessionService {
     state.turns.push(turn);
     if (updates.phase !== undefined) state.phase = updates.phase;
     if (updates.topicCoverage !== undefined) {
-      state.topicCoverage = { ...state.topicCoverage, ...updates.topicCoverage };
+      state.topicCoverage = { ...(state.topicCoverage ?? {}), ...updates.topicCoverage };
     }
     if (updates.currentDifficulty !== undefined) state.currentDifficulty = updates.currentDifficulty;
     if (updates.approximateTokens !== undefined) state.approximateTokens = updates.approximateTokens;

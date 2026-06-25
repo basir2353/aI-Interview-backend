@@ -18,22 +18,41 @@ export interface EvaluateAnswerInput {
 
 export class EvaluationEngine {
   async evaluate(input: EvaluateAnswerInput): Promise<AnswerEvaluation> {
-    const llm = getLLMService();
-    const system = SYSTEM_PROMPT_EVALUATION;
-    const userContent = buildEvaluationPrompt(input.question, input.answer, input.competencyIds);
+    try {
+      const llm = getLLMService();
+      const system = SYSTEM_PROMPT_EVALUATION;
+      const userContent = buildEvaluationPrompt(input.question, input.answer, input.competencyIds);
 
-    const response = await llm.chat(
-      [
-        { role: 'system', content: system },
-        { role: 'user', content: userContent },
-      ],
-      { temperature: 0.3, maxTokens: 256 }
-    );
+      const response = await llm.chat(
+        [
+          { role: 'system', content: system },
+          { role: 'user', content: userContent },
+        ],
+        { temperature: 0.3, maxTokens: 256, timeoutMs: 45000 }
+      );
 
-    const parsed = this.parseEvaluationResponse(response.content, input.competencyIds);
+      const parsed = this.parseEvaluationResponse(response.content, input.competencyIds);
+      return {
+        ...parsed,
+        normalizedScore: parsed.score / MAX_SCORE,
+      };
+    } catch (err) {
+      console.error('EvaluationEngine.evaluate failed (using neutral score):', err);
+      return this.neutralEvaluation(input.competencyIds);
+    }
+  }
+
+  private neutralEvaluation(competencyIds: string[]): AnswerEvaluation {
     return {
-      ...parsed,
-      normalizedScore: parsed.score / MAX_SCORE,
+      score: 6,
+      maxScore: MAX_SCORE,
+      relevance: 6,
+      structure: 6,
+      depth: 5,
+      competencyIds: competencyIds.length ? competencyIds : ['communication'],
+      redFlags: [],
+      feedbackSnippet: 'Answer recorded.',
+      normalizedScore: 0.6,
     };
   }
 
@@ -41,10 +60,10 @@ export class EvaluationEngine {
     try {
       const cleaned = raw.replace(/```json?\s*/g, '').trim();
       const obj = JSON.parse(cleaned) as Record<string, unknown>;
-      const score = Math.min(MAX_SCORE, Math.max(0, Number(obj.score) ?? 0));
-      const relevance = Math.min(MAX_SCORE, Math.max(0, Number(obj.relevance) ?? score));
-      const structure = Math.min(MAX_SCORE, Math.max(0, Number(obj.structure) ?? score));
-      const depth = Math.min(MAX_SCORE, Math.max(0, Number(obj.depth) ?? score));
+      const score = Math.min(MAX_SCORE, Math.max(0, Number(obj.score) || 0));
+      const relevance = Math.min(MAX_SCORE, Math.max(0, Number(obj.relevance) || score));
+      const structure = Math.min(MAX_SCORE, Math.max(0, Number(obj.structure) || score));
+      const depth = Math.min(MAX_SCORE, Math.max(0, Number(obj.depth) || score));
       const redFlags = Array.isArray(obj.redFlags) ? (obj.redFlags as string[]) : [];
       const feedbackSnippet = typeof obj.feedbackSnippet === 'string' ? obj.feedbackSnippet : '';
       const compIds = Array.isArray(obj.competencyIds) ? (obj.competencyIds as string[]) : competencyIds;

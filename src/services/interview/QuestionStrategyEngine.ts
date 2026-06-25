@@ -109,7 +109,7 @@ export class QuestionStrategyEngine {
       const verbalOnly = state.customQuestions
         .filter((q) => !q.isCodingQuestion)
         .map((q, idx) => ({ id: `custom-${idx}`, ...q }))
-        .filter((q) => !state.topicCoverage[q.id]);
+        .filter((q) => !(state.topicCoverage ?? {})[q.id]);
       if (verbalOnly.length > 0) {
         const byDifficulty = verbalOnly.filter((q) => q.difficulty === state.currentDifficulty);
         const custom = (byDifficulty.length > 0 ? byDifficulty : verbalOnly)[0];
@@ -135,7 +135,7 @@ export class QuestionStrategyEngine {
         if (recruiterCodingQuestions.length === 0) return null;
         const problem = recruiterCodingQuestions[0]!;
         const slotId = 'recruiter-coding-0';
-        if (state.topicCoverage[slotId]) return null;
+        if ((state.topicCoverage ?? {})[slotId]) return null;
         return {
           questionText: `We've finished the main part of the interview. As a final question, I'd like you to solve a short coding problem. Please switch to the **Code** tab — the editor and terminal will appear automatically.\n\n${problem.text}`,
           questionId: slotId,
@@ -164,7 +164,7 @@ export class QuestionStrategyEngine {
       const slotOrder = ['coding-0', 'coding-0-follow', 'coding-1', 'coding-1-follow', 'coding-2', 'coding-2-follow'];
       for (let i = 0; i < slotOrder.length; i++) {
         const slot = slotOrder[i];
-        if (state.topicCoverage[slot]) continue;
+        if ((state.topicCoverage ?? {})[slot]) continue;
         const isFollowUp = slot.endsWith('-follow');
         const problemIndex = isFollowUp ? parseInt(slot.replace('coding-', '').replace('-follow', ''), 10) : parseInt(slot.replace('coding-', ''), 10);
         if (isFollowUp) {
@@ -182,7 +182,7 @@ export class QuestionStrategyEngine {
         }
         const problem = pool[problemIndex];
         if (!problem) continue;
-        const isFirstCoding = problemIndex === 0 && !state.topicCoverage['coding-0'];
+        const isFirstCoding = problemIndex === 0 && !(state.topicCoverage ?? {})['coding-0'];
         const questionText = isFirstCoding
           ? `Great, we're done with the verbal part. Please switch to the **Code** tab—you'll have 3 problems to solve. Here's the first one:\n\n${problem.text}`
           : problem.text;
@@ -220,7 +220,8 @@ export class QuestionStrategyEngine {
       }
     }
 
-    const uncovered = candidates.filter((q) => !state.topicCoverage[q.id]);
+    const coverage = state.topicCoverage ?? {};
+    const uncovered = candidates.filter((q) => !coverage[q.id]);
     const pool = uncovered.length > 0 ? uncovered : candidates;
     const byDifficulty = pool.filter((q) => q.difficulty === state.currentDifficulty);
     const choice = (byDifficulty.length > 0 ? byDifficulty : pool)[0];

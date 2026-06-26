@@ -14,6 +14,29 @@ import type { DifficultyLevel, ScheduledCustomQuestion } from '../../types';
 const router = Router();
 const ROLES = ['technical', 'behavioral', 'sales', 'customer_success'] as const;
 const DIFFICULTY_LEVELS = ['easy', 'medium', 'hard'] as const;
+const INTERVIEWER_PERSONAS = ['ethan', 'zara'] as const;
+
+type InterviewerPersona = (typeof INTERVIEWER_PERSONAS)[number];
+
+function normalizeInterviewerPersona(value: string | null | undefined): InterviewerPersona {
+  return value === 'zara' ? 'zara' : 'ethan';
+}
+
+function mapRecruiterIdentity(row: {
+  id: string;
+  email: string;
+  name: string | null;
+  company_name?: string | null;
+  interviewer_persona?: string | null;
+}) {
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    companyName: row.company_name ?? null,
+    interviewerPersona: normalizeInterviewerPersona(row.interviewer_persona),
+  };
+}
 
 function isDifficultyLevel(value: unknown): value is DifficultyLevel {
   return typeof value === 'string' && (DIFFICULTY_LEVELS as readonly string[]).includes(value);

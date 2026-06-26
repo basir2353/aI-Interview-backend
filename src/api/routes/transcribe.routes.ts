@@ -316,7 +316,29 @@ async function transcribeWithRemoteStt(filePath: string): Promise<string> {
 
 function remoteSttConfigured(): boolean {
   const { baseUrl, apiKey } = config.stt.remote;
-  return Boolean(baseUrl || apiKey || config.ai.openaiApiKey);
+  if (config.stt.provider === 'speaches') {
+    return Boolean(baseUrl && apiKey);
+  }
+  if (config.stt.provider === 'openai') {
+    return Boolean(config.ai.openaiApiKey);
+  }
+  return Boolean(apiKey || config.ai.openaiApiKey || baseUrl);
+}
+
+async function tryRemoteStt(normalizedPath: string): Promise<string | null> {
+  if (!remoteSttConfigured()) return null;
+  try {
+    logger.info(`[transcribe] using ${remoteSttLabel()}`, {
+      baseUrl: config.stt.remote.baseUrl || '(OpenAI default)',
+      model: config.stt.remote.model,
+    });
+    const transcript = (await transcribeWithRemoteStt(normalizedPath)).trim();
+    return transcript || null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn('[transcribe] remote STT failed; will try local whisper if available', { error: message });
+    return null;
+  }
 }
 
 function remoteSttLabel(): string {
@@ -328,34 +350,34 @@ async function transcribeNormalizedAudio(normalizedPath: string, res: Response):
 
   if (config.stt.provider === 'openai' || config.stt.provider === 'speaches') {
     if (!remoteSttConfigured()) {
-      return res.status(500).json({
-        error: 'Remote STT not configured',
-        details:
-          config.stt.provider === 'speaches'
-            ? 'Set STT_PROVIDER=speaches, SPEACHES_BASE_URL (Railway URL), and SPEACHES_API_KEY.'
-            : 'Set STT_PROVIDER=openai and OPENAI_API_KEY, or use Speaches with SPEACHES_BASE_URL.',
+      logger.warn('[transcribe] Remote STT not fully configured; falling back to local whisper.cpp', {
+        provider: config.stt.provider,
+        hasBaseUrl: Boolean(config.stt.remote.baseUrl),
+        hasApiKey: Boolean(config.stt.remote.apiKey),
       });
+    } else {
+      const remoteTranscript = await tryRemoteStt(normalizedPath);
+      if (remoteTranscript) {
+        return res.json({ transcript: remoteTranscript });
+      }
+      logger.warn('[transcribe] Remote STT unavailable; falling back to local whisper.cpp');
     }
-    logger.info(`[transcribe] using ${remoteSttLabel()}`, {
-      baseUrl: config.stt.remote.baseUrl || '(OpenAI default)',
-      model: config.stt.remote.model,
-    });
-    const transcript = (await transcribeWithRemoteStt(normalizedPath)).trim();
-    if (!transcript) {
-      return res.status(422).json({ error: 'Empty transcript', details: 'STT returned no text.' });
-    }
-    return res.json({ transcript });
   }
 
   const whisperBin = await resolveWhisperBin();
   if (!whisperBin) {
-    if (remoteSttConfigured()) {
-      logger.warn('[transcribe] whisper.cpp unavailable; falling back to remote STT');
-      const transcript = (await transcribeWithRemoteStt(normalizedPath)).trim();
-      if (!transcript) {
-        return res.status(422).json({ error: 'Empty transcript', details: 'STT returned no text.' });
-      }
-      return res.json({ transcript });
+    const remoteTranscript = await tryRemoteStt(normalizedPath);
+    if (remoteTranscript) {
+      return res.json({ transcript: remoteTranscript });
+    }
+    if (config.stt.provider === 'speaches' || config.stt.provider === 'openai') {
+      return res.status(500).json({
+        error: 'Remote STT not configured',
+        details:
+          config.stt.provider === 'speaches'
+            ? 'Set SPEACHES_BASE_URL and SPEACHES_API_KEY on Railway, or remove STT_PROVIDER=speaches to use built-in whisper.cpp.'
+            : 'Set OPENAI_API_KEY or configure Speaches (SPEACHES_BASE_URL + SPEACHES_API_KEY).',
+      });
     }
     return res.status(500).json({
       error: 'Whisper executable not found',
@@ -401,10 +423,10 @@ async function transcribeNormalizedAudio(normalizedPath: string, res: Response):
       stderr: errOut.slice(0, 2000),
       stdout: ws.stdout.slice(0, 500),
     });
-    if (remoteSttConfigured() && /shared libraries|libwhisper|ENOENT|cannot open shared object/i.test(errOut)) {
+    if (remoteSttConfigured()) {
       logger.warn('[transcribe] whisper.cpp broken at runtime; falling back to remote STT');
-      const transcript = (await transcribeWithRemoteStt(normalizedPath)).trim();
-      if (transcript) return res.json({ transcript });
+      const remoteTranscript = await tryRemoteStt(normalizedPath);
+      if (remoteTranscript) return res.json({ transcript: remoteTranscript });
     }
     return res.status(500).json({
       error: 'whisper.cpp failed',

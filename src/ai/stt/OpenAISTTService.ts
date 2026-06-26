@@ -19,6 +19,7 @@ export class OpenAISTTService implements ISTTService {
       this.client = new OpenAI({
         apiKey: key || 'not-used',
         ...(base ? { baseURL: base } : {}),
+        defaultHeaders: key ? { Authorization: `Bearer ${key}` } : undefined,
       });
     }
     this.model = model;
@@ -37,9 +38,15 @@ export class OpenAISTTService implements ISTTService {
         model: this.model,
       });
       return transcription.text;
-    } catch (error) {
-      console.error('Remote STT error:', error);
-      throw new Error('Failed to transcribe audio');
+    } catch (error: unknown) {
+      const status = (error as { status?: number })?.status;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Remote STT error:', { status, message, baseUrl: config.stt.remote.baseUrl });
+      throw new Error(
+        status === 401 || status === 403
+          ? 'STT authentication failed — check SPEACHES_API_KEY'
+          : 'Failed to transcribe audio'
+      );
     }
   }
 }

@@ -13,7 +13,7 @@ import {
   getCodingModePromptBlock,
   type CodingInterviewModeId,
 } from '../../constants/codingInterviewModes';
-import { buildInterviewWelcome, formatFirstName } from './InterviewWelcomeService';
+import { buildInterviewWelcomeParts, formatFirstName } from './InterviewWelcomeService';
 import { interviewSessionService } from './InterviewSessionService';
 import { conversationManager } from './ConversationManager';
 import { questionStrategyEngine } from './QuestionStrategyEngine';
@@ -74,25 +74,25 @@ export class AIInterviewerOrchestrator {
     return role === 'technical' ? 'Ethan' : 'ZaraAlex';
   }
 
-  private buildWelcomeText(state: InterviewState): string {
+  private buildWelcomeParts(state: InterviewState): string[] {
     const codingMode = state.codingInterviewMode as CodingInterviewModeId | undefined;
     const interviewerName = this.interviewerName(state.role);
     const positionTitle = state.positionTitle ?? state.resumeProfile?.positionTitle;
     const profile = {
-      candidateName: state.resumeProfile?.candidateName,
+      candidateName: state.candidateDisplayName ?? state.resumeProfile?.candidateName,
       positionTitle,
       skills: state.resumeProfile?.skills ?? [],
       experience: state.resumeProfile?.experience ?? [],
       projects: state.resumeProfile?.projects ?? [],
-      education: [],
-      certifications: [],
+      education: [] as string[],
+      certifications: [] as string[],
       techStack: state.resumeProfile?.techStack ?? [],
-      achievements: [],
+      achievements: [] as string[],
       workHistory: state.resumeProfile?.experience ?? [],
       summary: state.resumeProfile?.summary ?? '',
     };
     if (state.resumeProfile || state.resumeContext?.trim()) {
-      return buildInterviewWelcome(profile, {
+      return buildInterviewWelcomeParts(profile, {
         codingModeId: codingMode,
         interviewerName,
         roleLabel: this.roleLabel(state.role),
@@ -101,10 +101,14 @@ export class AIInterviewerOrchestrator {
     const firstName = formatFirstName(profile.candidateName);
     const roleLabel = this.roleLabel(state.role);
     const positionBit = positionTitle
-      ? `We're here to talk about the ${positionTitle} role.`
-      : `We're here for your ${roleLabel} interview today.`;
-    const nameBit = firstName ? `${firstName}, it's great to meet you.` : `It's great to meet you.`;
-    return `Hello! Hi there — I'm ${interviewerName}, and I'll be conducting your interview today. Thanks for making the time to speak with me. ${nameBit} ${positionBit} I've had a chance to review what you shared with us. We'll keep this conversational — I'll ask about your experience and how you think through problems. Take your time with your answers. Whenever you're ready, we can get started.`;
+      ? `I understand you're here for the ${positionTitle} role.`
+      : `I understand you're here for your ${roleLabel} interview today.`;
+    const nameBit = firstName ? `${firstName}, it's really good to meet you.` : `It's really good to meet you.`;
+    return [
+      `Hello! Hi there. I'm ${interviewerName} — I'll be your interviewer today. Thanks for making the time to join me.`,
+      `${nameBit} ${positionBit} I've had a chance to review what you shared with us.`,
+      `We'll keep this relaxed and conversational. Take your time with answers. When you're ready, we'll dive in.`,
+    ];
   }
 
   private interviewerPromptExtras(state: InterviewState): string {
@@ -245,9 +249,11 @@ export class AIInterviewerOrchestrator {
     }
 
     if (isFirstQuestion) {
-      const welcomeText = this.buildWelcomeText(state);
-      const introTurn = conversationManager.createTurn('ai', welcomeText, { isIntro: true });
-      await interviewSessionService.appendTurn(input.interviewId, introTurn);
+      const welcomeParts = this.buildWelcomeParts(state);
+      for (const part of welcomeParts) {
+        const introTurn = conversationManager.createTurn('ai', part, { isIntro: true });
+        await interviewSessionService.appendTurn(input.interviewId, introTurn);
+      }
 
       const questionText = rawReply.trim();
       let questionAvatarVideo: string | undefined;
@@ -281,7 +287,7 @@ export class AIInterviewerOrchestrator {
       return {
         success: true,
         state: updatedState ?? state,
-        reply: welcomeText,
+        reply: welcomeParts[0] ?? '',
         avatarVideo: questionAvatarVideo,
         questionId: next.questionId,
         phase: next.phase,

@@ -208,6 +208,7 @@ router.post(
       resumeContext,
       resumeProfile,
       positionTitle: positionTitle ?? undefined,
+      candidateDisplayName: row.candidate_name?.trim() || undefined,
       codingInterviewMode,
       preferredDifficulty: row.preferred_difficulty ?? undefined,
       customQuestions,

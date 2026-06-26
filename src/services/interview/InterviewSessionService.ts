@@ -27,6 +27,7 @@ export interface StartInterviewInput {
   resumeProfile?: ResumeProfile;
   codingInterviewMode?: CodingInterviewModeId;
   positionTitle?: string;
+  candidateDisplayName?: string;
   preferredDifficulty?: DifficultyLevel;
   customQuestions?: ScheduledCustomQuestion[];
   focusAreas?: string;
@@ -55,7 +56,7 @@ export class InterviewSessionService {
       resumeContext: input.resumeContext,
       resumeProfile: input.resumeProfile
         ? {
-            candidateName: input.resumeProfile.candidateName,
+            candidateName: input.candidateDisplayName ?? input.resumeProfile.candidateName,
             skills: input.resumeProfile.skills,
             techStack: input.resumeProfile.techStack,
             experience: input.resumeProfile.experience,
@@ -65,6 +66,7 @@ export class InterviewSessionService {
           }
         : undefined,
       positionTitle: input.positionTitle ?? input.resumeProfile?.positionTitle,
+      candidateDisplayName: input.candidateDisplayName,
       codingInterviewMode: input.codingInterviewMode,
       welcomeDelivered: false,
       role: input.role,

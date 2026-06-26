@@ -92,6 +92,8 @@ export interface InterviewState {
   welcomeDelivered?: boolean;
   /** Job / position title for personalized welcome */
   positionTitle?: string;
+  /** Display name from schedule (preferred over resume parsing) */
+  candidateDisplayName?: string;
   /** Recruiter-specified duration in minutes */
   durationMinutes?: number;
   /** Token budget used (approximate) for context window management */

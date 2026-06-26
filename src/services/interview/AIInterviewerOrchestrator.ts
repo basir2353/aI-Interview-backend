@@ -13,7 +13,7 @@ import {
   getCodingModePromptBlock,
   type CodingInterviewModeId,
 } from '../../constants/codingInterviewModes';
-import { buildInterviewWelcomeParts, formatFirstName } from './InterviewWelcomeService';
+import { buildInterviewWelcomeParts, buildFirstWarmUpQuestion, formatFirstName } from './InterviewWelcomeService';
 import { interviewSessionService } from './InterviewSessionService';
 import { conversationManager } from './ConversationManager';
 import { questionStrategyEngine } from './QuestionStrategyEngine';
@@ -239,11 +239,13 @@ export class AIInterviewerOrchestrator {
 
     const isFirstQuestion = state.turns.length === 0;
     let rawReply: string;
-    if (isFirstQuestion && state.resumeContext?.trim()) {
-      rawReply = await this.getFirstQuestionFromResume(state);
-      if (!rawReply?.trim()) rawReply = next.questionText;
-    } else if (isFirstQuestion) {
-      rawReply = next.questionText;
+    if (isFirstQuestion) {
+      rawReply = buildFirstWarmUpQuestion({
+        candidateName: state.candidateDisplayName ?? state.resumeProfile?.candidateName,
+        positionTitle: state.positionTitle ?? state.resumeProfile?.positionTitle,
+        roleLabel: this.roleLabel(state.role),
+        codingModeId: state.codingInterviewMode as CodingInterviewModeId | undefined,
+      });
     } else {
       rawReply = await this.getNextReplyInternal(state, next.questionText, next.questionId, next.phase);
     }
@@ -327,38 +329,6 @@ export class AIInterviewerOrchestrator {
     };
   }
 
-  /** When resume is available, generate the first question by reading the resume thoroughly. */
-  private async getFirstQuestionFromResume(state: InterviewState): Promise<string> {
-    const resumeContextBlock = state.resumeContext
-      ? `\nCandidate resume/profile context (read this thoroughly before deciding your first question):\n${state.resumeContext}\n\nYou MUST base your first question on something specific from this resume.`
-      : '';
-    const systemContent =
-      SYSTEM_PROMPT_INTERVIEWER.replace('{{phase}}', state.phase)
-        .replace('{{role}}', state.role) +
-      resumeContextBlock +
-      this.interviewerPromptExtras(state);
-    const userInstruction = `The interviewer has ALREADY greeted the candidate and introduced themselves in a separate welcome message. Do NOT say hello, welcome, or introduce yourself again.
-
-Your task: ask exactly ONE opening interview question. Start with a natural bridge like "So, to kick things off —" or "I'd love to start by asking —" then reference something specific from their resume (a project, company, role, or skill). Sound like a real senior interviewer in conversation — warm but focused. One question only. Respond only with valid JSON: {"reply": "<your first question>", "intent": "next_question", "suggestedNextPhase": null}`;
-    const messages = [
-      { role: 'system' as const, content: systemContent },
-      { role: 'user' as const, content: userInstruction },
-    ];
-    const llm = getLLMService();
-    try {
-      const response = await llm.chat(messages, {
-        temperature: 0.4,
-        maxTokens: 512,
-        timeoutMs: LLM_INTERVIEW_TIMEOUT_MS,
-      });
-      const reply = extractInterviewerReply(response.content || '', '');
-      if (reply) return reply;
-    } catch {
-      // fallback to template question
-    }
-    return '';
-  }
-
   private async getNextReplyInternal(
     state: InterviewState,
     questionText: string,
@@ -394,7 +364,9 @@ Your task: ask exactly ONE opening interview question. Start with a natural brid
 
 The candidate answered: "${answerSnippet}"
 
-Analyze the candidate's answer. Your reply must: (1) Show you understood by referencing or reflecting something specific they said. (2) Then ask the next question; you may rephrase it to connect to their answer. Next question to ask (topic/intent): ${questionText}`;
+Analyze their answer. You have read their resume — reference specific skills, projects, companies, or claims naturally when asking the next question or follow-up. If their answer was vague, probe deeper. If strong, raise difficulty slightly. Your reply must: (1) Briefly reflect something specific they said. (2) Ask the next question; you may rephrase to connect to their answer. Next question topic/intent: ${questionText}
+
+Respond only with valid JSON: {"reply": "<your spoken reply: brief acknowledgment + one question>", "intent": "follow_up" | "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
     } else if (answerSnippet) {
       userInstruction = `The candidate just said: "${answerSnippet}". Analyze their answer. Reference something specific they said, then ask the next question. Next question to ask: ${questionText}`;
     } else {

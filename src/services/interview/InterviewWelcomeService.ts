@@ -60,3 +60,30 @@ export function buildInterviewWelcome(
 ): string {
   return buildInterviewWelcomeParts(profile, options).join(' ');
 }
+
+/**
+ * First question AFTER the spoken intro — warm and human.
+ * Does NOT jump straight into a deep resume probe (that comes on follow-ups).
+ */
+export function buildFirstWarmUpQuestion(input: {
+  candidateName?: string;
+  positionTitle?: string;
+  roleLabel?: string;
+  codingModeId?: CodingInterviewModeId;
+}): string {
+  const firstName = formatFirstName(input.candidateName);
+  const roleRef = input.positionTitle
+    ? `the ${input.positionTitle} role`
+    : `this ${input.roleLabel ?? 'technical'} opportunity`;
+
+  if (input.codingModeId) {
+    const modeLabel = CODING_INTERVIEW_MODES[input.codingModeId].label.toLowerCase();
+    return firstName
+      ? `Alright, ${firstName} — let's start simple. Tell me a bit about yourself and the ${modeLabel} experience you're bringing to ${roleRef}.`
+      : `Alright — let's start simple. Tell me a bit about yourself and the ${modeLabel} experience you're bringing to ${roleRef}.`;
+  }
+
+  return firstName
+    ? `So, to kick things off — ${firstName}, walk me through your background in your own words, and what drew you to ${roleRef}.`
+    : `So, to kick things off — walk me through your background in your own words, and what drew you to ${roleRef}.`;
+}

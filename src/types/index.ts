@@ -74,6 +74,19 @@ export interface InterviewState {
   customQuestions?: ScheduledCustomQuestion[];
   /** Recruiter-specified focus areas / subject (e.g. backend, APIs) used in interview */
   focusAreas?: string;
+  /** Parsed structured resume profile for welcome + personalization */
+  resumeProfile?: {
+    candidateName?: string;
+    skills: string[];
+    techStack: string[];
+    experience: string[];
+    projects: string[];
+    summary: string;
+  };
+  /** Coding interview style when technical (dsa, frontend, etc.) */
+  codingInterviewMode?: string;
+  /** Whether welcome overview was already delivered in first AI turn */
+  welcomeDelivered?: boolean;
   /** Recruiter-specified duration in minutes */
   durationMinutes?: number;
   /** Token budget used (approximate) for context window management */

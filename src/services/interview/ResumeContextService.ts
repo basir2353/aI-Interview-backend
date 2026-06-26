@@ -4,27 +4,54 @@ import { URL } from 'url';
 import { PDFParse } from 'pdf-parse';
 import mammoth from 'mammoth';
 import { config } from '../../config';
+import {
+  buildResumeProfile,
+  serializeResumeProfileForPrompt,
+  type ResumeProfile,
+} from './ResumeProfileService';
+
+export type { ResumeProfile } from './ResumeProfileService';
+
+export interface ResumeContextResult {
+  resumeContext?: string;
+  resumeProfile?: ResumeProfile;
+}
 
 export async function buildResumeContext(input: {
   resumeUrl?: string | null;
   coverLetter?: string | null;
   candidateName?: string | null;
   positionTitle?: string | null;
-}): Promise<string | undefined> {
-  const parts: string[] = [];
-  if (input.candidateName) parts.push(`Candidate name: ${input.candidateName}`);
-  if (input.positionTitle) parts.push(`Applied position: ${input.positionTitle}`);
-  if (input.coverLetter?.trim()) {
-    parts.push(`Candidate cover/profile details:\n${cleanText(input.coverLetter)}`);
-  }
-
+}): Promise<ResumeContextResult> {
   const resumeText = await readResumeText(input.resumeUrl);
-  if (resumeText) {
-    parts.push(`Resume extracted content (use this for personalized follow-up questions):\n${resumeText}`);
+  const cover = input.coverLetter?.trim() ?? '';
+
+  if (!resumeText && !cover && !input.candidateName) {
+    return {};
   }
 
-  if (parts.length === 0) return undefined;
-  return cleanText(parts.join('\n\n')).slice(0, 5000);
+  const profile = buildResumeProfile({
+    rawText: resumeText,
+    candidateName: input.candidateName,
+    positionTitle: input.positionTitle,
+    coverLetter: cover,
+  });
+
+  const structured = serializeResumeProfileForPrompt(profile);
+  const parts: string[] = [];
+  if (structured) {
+    parts.push(
+      `Structured candidate profile (use for personalized questions — reference specific skills, projects, and experience naturally):\n${structured}`
+    );
+  }
+  if (resumeText) {
+    parts.push(`Full resume text:\n${resumeText.slice(0, 2800)}`);
+  }
+
+  return {
+    resumeProfile: profile,
+    resumeContext: parts.join('\n\n').slice(0, 5000),
+  };
 }
 
 async function readResumeText(resumeUrl?: string | null): Promise<string> {
@@ -63,7 +90,7 @@ async function loadResumeBuffer(resumeUrl: string): Promise<Buffer | null> {
       await fs.access(localPath);
       return fs.readFile(localPath);
     } catch {
-      // try HTTP below (Railway / ephemeral disk)
+      // HTTP fallback
     }
   }
 
@@ -104,10 +131,7 @@ function toAbsoluteResumeUrl(resumeUrl: string): string | null {
   if (resumeUrl.startsWith('http://') || resumeUrl.startsWith('https://')) return resumeUrl;
   if (resumeUrl.startsWith('/uploads/resumes/')) {
     const base = config.publicUrl?.replace(/\/$/, '');
-    if (!base) {
-      console.warn('[ResumeContext] BACKEND_URL not set; cannot fetch', resumeUrl);
-      return null;
-    }
+    if (!base) return null;
     return `${base}${resumeUrl}`;
   }
   return null;
@@ -117,12 +141,10 @@ function cleanText(value: string): string {
   return value.replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-/** Returns raw resume text for matching (e.g. against job requirements). */
 export async function getResumeTextForMatch(resumeUrl?: string | null): Promise<string> {
   return readResumeText(resumeUrl);
 }
 
-/** Computes a 0–100 match score: how many job keywords appear in the resume. */
 export function computeResumeJobMatchScore(jobText: string, resumeText: string): number {
   const tokenize = (t: string) =>
     t
@@ -138,6 +160,5 @@ export function computeResumeJobMatchScore(jobText: string, resumeText: string):
     if (resumeWords.has(w)) hit++;
   }
   const raw = (hit / jobWords.size) * 100;
-  const boosted = Math.min(100, Math.round(raw * 1.2));
-  return boosted;
+  return Math.min(100, Math.round(raw * 1.2));
 }

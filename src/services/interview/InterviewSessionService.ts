@@ -16,19 +16,23 @@ import type {
   DifficultyLevel,
   ScheduledCustomQuestion,
 } from '../../types';
-
-const DEFAULT_PHASE_ORDER: InterviewPhase[] = ['intro', 'technical', 'behavioral', 'wrap_up', 'coding'];
+import type { ResumeProfile } from './ResumeProfileService';
+import type { CodingInterviewModeId } from '../../constants/codingInterviewModes';
 
 export interface StartInterviewInput {
   candidateId: string;
   role: 'technical' | 'behavioral' | 'sales' | 'customer_success';
   positionId?: string;
   resumeContext?: string;
+  resumeProfile?: ResumeProfile;
+  codingInterviewMode?: CodingInterviewModeId;
   preferredDifficulty?: DifficultyLevel;
   customQuestions?: ScheduledCustomQuestion[];
   focusAreas?: string;
   durationMinutes?: number;
 }
+
+const DEFAULT_PHASE_ORDER: InterviewPhase[] = ['intro', 'technical', 'behavioral', 'wrap_up', 'coding'];
 
 export interface StartInterviewResult {
   interviewId: string;
@@ -48,6 +52,18 @@ export class InterviewSessionService {
       interviewId,
       candidateId: input.candidateId,
       resumeContext: input.resumeContext,
+      resumeProfile: input.resumeProfile
+        ? {
+            candidateName: input.resumeProfile.candidateName,
+            skills: input.resumeProfile.skills,
+            techStack: input.resumeProfile.techStack,
+            experience: input.resumeProfile.experience,
+            projects: input.resumeProfile.projects,
+            summary: input.resumeProfile.summary,
+          }
+        : undefined,
+      codingInterviewMode: input.codingInterviewMode,
+      welcomeDelivered: false,
       role: input.role,
       phase: 'intro',
       startedAt: now,

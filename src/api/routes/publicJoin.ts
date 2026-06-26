@@ -10,6 +10,7 @@ import { interviewSessionService } from '../../services/interview/InterviewSessi
 import { aiInterviewerOrchestrator } from '../../services/interview/AIInterviewerOrchestrator';
 import { validate } from '../middleware/validate';
 import { buildResumeContext } from '../../services/interview/ResumeContextService';
+import { parseCodingModeFromFocusAreas } from '../../constants/codingInterviewModes';
 import type { DifficultyLevel, ScheduledCustomQuestion } from '../../types';
 
 const router = Router();
@@ -142,6 +143,7 @@ router.post(
       candidateId = insertRows[0].id;
     }
     let resumeContext: string | undefined;
+    let resumeProfile: Awaited<ReturnType<typeof buildResumeContext>>['resumeProfile'];
     if (row.application_id) {
       const { rows: appRows } = await query<{
         resume_url: string | null;
@@ -157,19 +159,25 @@ router.post(
       );
       const app = appRows[0];
       if (app) {
-        resumeContext = await buildResumeContext({
+        const built = await buildResumeContext({
           resumeUrl: app.resume_url,
           coverLetter: app.cover_letter,
           candidateName: row.candidate_name ?? row.candidate_email,
           positionTitle: app.position_title,
         });
+        resumeContext = built.resumeContext;
+        resumeProfile = built.resumeProfile;
       }
     } else if (row.resume_url) {
-      resumeContext = await buildResumeContext({
+      const built = await buildResumeContext({
         resumeUrl: row.resume_url,
         candidateName: row.candidate_name ?? row.candidate_email,
       });
+      resumeContext = built.resumeContext;
+      resumeProfile = built.resumeProfile;
     }
+
+    const codingInterviewMode = parseCodingModeFromFocusAreas(row.focus_areas);
 
     const hasCodingQuestions = customQuestions.some((q) => q.isCodingQuestion);
     if (row.role === 'technical' && !hasCodingQuestions) {
@@ -186,6 +194,8 @@ router.post(
       role: row.role as 'technical' | 'behavioral' | 'sales' | 'customer_success',
       positionId: row.position_id ?? undefined,
       resumeContext,
+      resumeProfile,
+      codingInterviewMode,
       preferredDifficulty: row.preferred_difficulty ?? undefined,
       customQuestions,
       focusAreas: row.focus_areas?.trim() || undefined,

@@ -9,6 +9,11 @@
 import { getLLMService } from '../../ai/llm';
 import { extractInterviewerReply } from '../../ai/llm/extractReply';
 import { SYSTEM_PROMPT_INTERVIEWER, buildInterviewerContext } from '../../ai/prompts';
+import {
+  getCodingModePromptBlock,
+  type CodingInterviewModeId,
+} from '../../constants/codingInterviewModes';
+import { buildInterviewWelcome } from './InterviewWelcomeService';
 import { interviewSessionService } from './InterviewSessionService';
 import { conversationManager } from './ConversationManager';
 import { questionStrategyEngine } from './QuestionStrategyEngine';
@@ -72,14 +77,43 @@ export class AIInterviewerOrchestrator {
   private withGreetingIfFirstTurn(state: InterviewState, reply: string): string {
     const trimmed = (reply || '').trim();
     if (state.turns.length > 0) return trimmed;
+
+    const codingMode = state.codingInterviewMode as CodingInterviewModeId | undefined;
+    if (state.resumeProfile && !state.welcomeDelivered) {
+      const welcome = buildInterviewWelcome(
+        {
+          candidateName: state.resumeProfile.candidateName,
+          positionTitle: undefined,
+          skills: state.resumeProfile.skills ?? [],
+          experience: state.resumeProfile.experience ?? [],
+          projects: state.resumeProfile.projects ?? [],
+          education: [],
+          certifications: [],
+          techStack: state.resumeProfile.techStack ?? [],
+          achievements: [],
+          workHistory: state.resumeProfile.experience ?? [],
+          summary: state.resumeProfile.summary ?? '',
+        },
+        codingMode
+      );
+      return `${welcome}\n\n${trimmed}`;
+    }
+
     const name = this.interviewerName(state.role);
     const intro = `Hi, I'm ${name} from Intervion AI. Welcome to this ${this.roleLabel(state.role)} interview.`;
-    if (!trimmed) {
-      return `${intro} Let's get started.`;
-    }
-    const alreadyGreeting = /^(hi|hello|welcome|i'?m)\b/i.test(trimmed);
-    if (alreadyGreeting) return trimmed;
+    if (!trimmed) return `${intro} Let's get started.`;
+    if (/^(hi|hello|welcome|i'?m)\b/i.test(trimmed)) return trimmed;
     return `${intro} ${trimmed}`;
+  }
+
+  private interviewerPromptExtras(state: InterviewState): string {
+    const codingBlock = getCodingModePromptBlock(
+      state.codingInterviewMode as CodingInterviewModeId | undefined
+    );
+    const focusAreasBlock = state.focusAreas
+      ? `\nInterview focus areas: ${state.focusAreas.replace(/coding_mode:[a-z_]+\s*\|\s*/i, '')}.`
+      : '';
+    return codingBlock + focusAreasBlock;
   }
 
   /**
@@ -229,6 +263,13 @@ export class AIInterviewerOrchestrator {
       phase: next.phase,
       currentDifficulty: next.difficulty,
     });
+    if (isFirstQuestion) {
+      const s = await interviewSessionService.getState(input.interviewId);
+      if (s) {
+        s.welcomeDelivered = true;
+        await interviewSessionService.setState(input.interviewId, s);
+      }
+    }
 
     const updatedState = await interviewSessionService.getState(input.interviewId);
     return {
@@ -249,7 +290,8 @@ export class AIInterviewerOrchestrator {
     const systemContent =
       SYSTEM_PROMPT_INTERVIEWER.replace('{{phase}}', state.phase)
         .replace('{{role}}', state.role) +
-      resumeContextBlock;
+      resumeContextBlock +
+      this.interviewerPromptExtras(state);
     const userInstruction = `Read the candidate's resume above thoroughly. Your task is to ask the very first interview question. Decide on ONE opening question that references something specific from their resume (e.g. a project, role, skill, or experience). Be conversational and natural. Respond only with valid JSON: {"reply": "<your first question>", "intent": "next_question", "suggestedNextPhase": null}`;
     const messages = [
       { role: 'system' as const, content: systemContent },
@@ -283,7 +325,7 @@ export class AIInterviewerOrchestrator {
       ? `\nCandidate resume/profile context (use thoroughly when deciding each question):\n${state.resumeContext}\n\nUse this context to personalize every question: reference their background, probe deeper into resume claims, and keep questions relevant to the candidate.`
       : '';
     const focusAreasBlock = state.focusAreas
-      ? `\nInterview focus areas / subject (set by recruiter): ${state.focusAreas}. Prioritize questions and topics related to these areas when relevant.`
+      ? `\nInterview focus areas / subject (set by recruiter): ${state.focusAreas.replace(/coding_mode:[a-z_]+\s*\|\s*/i, '')}. Prioritize questions related to these areas when relevant.`
       : '';
     const durationBlock = state.durationMinutes
       ? `\nInterview duration: ${state.durationMinutes} minutes. Keep questions focused and allow time for wrap-up.`
@@ -293,6 +335,7 @@ export class AIInterviewerOrchestrator {
         .replace('{{role}}', state.role) +
       resumeContextBlock +
       focusAreasBlock +
+      this.interviewerPromptExtras(state) +
       durationBlock +
       (context.priorSummary ? '\n' + buildInterviewerContext(context.priorSummary) : '');
 

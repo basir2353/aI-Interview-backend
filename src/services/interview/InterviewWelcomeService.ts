@@ -2,11 +2,26 @@ import type { ResumeProfile } from './ResumeProfileService';
 import type { CodingInterviewModeId } from '../../constants/codingInterviewModes';
 import { CODING_INTERVIEW_MODES } from '../../constants/codingInterviewModes';
 
-function formatFirstName(name?: string): string {
-  const raw = (name || 'there').trim().split(/\s+/)[0] || 'there';
+export function formatFirstName(name?: string): string {
+  const raw = (name || '').trim().split(/\s+/)[0];
+  if (!raw) return '';
   return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
 }
 
+function humanizeSkillHighlights(profile: ResumeProfile): string {
+  const stack = profile.techStack.slice(0, 4);
+  const skills = profile.skills.slice(0, 4);
+  const items = stack.length ? stack : skills;
+  if (items.length === 0) return '';
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+}
+
+/**
+ * Spoken welcome: interviewer greets and introduces themselves FIRST,
+ * then addresses the candidate by name, role, and what to expect — like a real senior interviewer.
+ */
 export function buildInterviewWelcome(
   profile: ResumeProfile,
   options?: {
@@ -18,31 +33,33 @@ export function buildInterviewWelcome(
   const firstName = formatFirstName(profile.candidateName);
   const interviewer = options?.interviewerName ?? 'Ethan';
   const roleLabel = options?.roleLabel ?? 'technical';
+  const highlights = humanizeSkillHighlights(profile);
 
-  const highlights: string[] = [];
-  if (profile.techStack.length) highlights.push(profile.techStack.slice(0, 6).join(', '));
-  else if (profile.skills.length) highlights.push(profile.skills.slice(0, 6).join(', '));
+  // —— Step 1: Greeting + interviewer introduces themselves (before candidate name) ——
+  const opener = `Hello! Hi there — I'm ${interviewer}, and I'll be conducting your interview today. Thanks for making the time to speak with me.`;
 
-  const experienceLine = highlights.length
-    ? `I've reviewed your resume. You have experience with ${highlights.join(', ')}.`
-    : `I've reviewed your resume and background.`;
+  // —— Step 2: Candidate name + role/position (after interviewer intro) ——
+  const nameBit = firstName ? `${firstName}, it's great to meet you.` : `It's great to meet you.`;
 
-  const positionLine = profile.positionTitle
-    ? `Thank you for interviewing for the ${profile.positionTitle} position.`
-    : '';
+  const positionBit = profile.positionTitle
+    ? `We're here to talk about the ${profile.positionTitle} role.`
+    : `We're here for your ${roleLabel} interview today.`;
 
-  const modeLine = options?.codingModeId
-    ? `Today's session is a ${CODING_INTERVIEW_MODES[options.codingModeId].label} interview.`
-    : `Today's ${roleLabel} interview will focus on your skills, project experience, problem-solving, and communication.`;
+  // —— Step 3: Light resume acknowledgment — conversational, not a list ——
+  let resumeBit = `I've had a chance to go through your background ahead of time.`;
+  if (highlights) {
+    resumeBit = `I've had a chance to go through your background — I see solid experience with ${highlights}, among other things.`;
+  } else if (profile.experience[0]) {
+    const snippet = profile.experience[0].slice(0, 70).replace(/\s+/g, ' ').trim();
+    resumeBit = `I've had a chance to go through your background — your work at ${snippet}${profile.experience[0].length > 70 ? '…' : ''} caught my eye.`;
+  }
 
-  return [
-    `Hi, I'm ${interviewer} from Intervion AI.`,
-    `Welcome, ${firstName}.`,
-    positionLine,
-    experienceLine,
-    modeLine,
-    `I've reviewed your background carefully — I'll ask thoughtful follow-up questions based on what you share.`,
-  ]
-    .filter(Boolean)
-    .join(' ');
+  // —— Step 4: What to expect — human, not scripted ——
+  const focusBit = options?.codingModeId
+    ? `We'll keep this conversational — I'll ask about your experience, how you think through problems, and some ${CODING_INTERVIEW_MODES[options.codingModeId].label.toLowerCase()} topics along the way.`
+    : `We'll keep this conversational — I'll ask about your experience, how you approach problems, and dig into a few specifics from your work. No trick questions; just a honest back-and-forth.`;
+
+  const closeBit = `Take your time with your answers. Whenever you're ready, we can get started.`;
+
+  return [opener, nameBit, positionBit, resumeBit, focusBit, closeBit].join(' ');
 }

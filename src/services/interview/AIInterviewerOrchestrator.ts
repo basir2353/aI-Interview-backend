@@ -13,7 +13,7 @@ import {
   getCodingModePromptBlock,
   type CodingInterviewModeId,
 } from '../../constants/codingInterviewModes';
-import { buildInterviewWelcome } from './InterviewWelcomeService';
+import { buildInterviewWelcome, formatFirstName } from './InterviewWelcomeService';
 import { interviewSessionService } from './InterviewSessionService';
 import { conversationManager } from './ConversationManager';
 import { questionStrategyEngine } from './QuestionStrategyEngine';
@@ -98,9 +98,13 @@ export class AIInterviewerOrchestrator {
         roleLabel: this.roleLabel(state.role),
       });
     }
-    const firstName = (profile.candidateName || 'there').split(/\s+/)[0];
-    const positionLine = positionTitle ? ` for the ${positionTitle} position` : '';
-    return `Hi, I'm ${interviewerName} from Intervion AI. Welcome${positionLine}, ${firstName}. Today's ${this.roleLabel(state.role)} interview will focus on your experience, problem-solving, and communication. I've reviewed what you shared — let's get started.`;
+    const firstName = formatFirstName(profile.candidateName);
+    const roleLabel = this.roleLabel(state.role);
+    const positionBit = positionTitle
+      ? `We're here to talk about the ${positionTitle} role.`
+      : `We're here for your ${roleLabel} interview today.`;
+    const nameBit = firstName ? `${firstName}, it's great to meet you.` : `It's great to meet you.`;
+    return `Hello! Hi there — I'm ${interviewerName}, and I'll be conducting your interview today. Thanks for making the time to speak with me. ${nameBit} ${positionBit} I've had a chance to review what you shared with us. We'll keep this conversational — I'll ask about your experience and how you think through problems. Take your time with your answers. Whenever you're ready, we can get started.`;
   }
 
   private interviewerPromptExtras(state: InterviewState): string {
@@ -327,7 +331,9 @@ export class AIInterviewerOrchestrator {
         .replace('{{role}}', state.role) +
       resumeContextBlock +
       this.interviewerPromptExtras(state);
-    const userInstruction = `Read the candidate's resume above thoroughly. Your task is to ask the very first interview question. Decide on ONE opening question that references something specific from their resume (e.g. a project, role, skill, or experience). Be conversational and natural. Respond only with valid JSON: {"reply": "<your first question>", "intent": "next_question", "suggestedNextPhase": null}`;
+    const userInstruction = `The interviewer has ALREADY greeted the candidate and introduced themselves in a separate welcome message. Do NOT say hello, welcome, or introduce yourself again.
+
+Your task: ask exactly ONE opening interview question. Start with a natural bridge like "So, to kick things off —" or "I'd love to start by asking —" then reference something specific from their resume (a project, company, role, or skill). Sound like a real senior interviewer in conversation — warm but focused. One question only. Respond only with valid JSON: {"reply": "<your first question>", "intent": "next_question", "suggestedNextPhase": null}`;
     const messages = [
       { role: 'system' as const, content: systemContent },
       { role: 'user' as const, content: userInstruction },

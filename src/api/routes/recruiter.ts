@@ -632,7 +632,10 @@ router.patch(
   '/me',
   recruiterAuthMiddleware,
   validate([
-    body('companyName').optional({ values: 'null' }).isString().isLength({ max: 255 }),
+    body('companyName')
+      .optional({ values: 'null' })
+      .custom((value) => value === null || (typeof value === 'string' && value.length <= 255))
+      .withMessage('companyName must be a string up to 255 characters or null'),
     body('interviewerPersona').optional().isIn(INTERVIEWER_PERSONAS),
   ]),
   async (req: Request, res: Response) => {

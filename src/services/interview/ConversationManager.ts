@@ -73,6 +73,7 @@ export class ConversationManager {
       codingLanguage?: string | null;
       isCodingQuestion?: boolean;
       avatarVideo?: string;
+      isIntro?: boolean;
     }
   ): Turn {
     return {
@@ -86,6 +87,7 @@ export class ConversationManager {
       codingLanguage: meta?.codingLanguage,
       isCodingQuestion: meta?.isCodingQuestion,
       avatarVideo: meta?.avatarVideo,
+      isIntro: meta?.isIntro,
     };
   }
 

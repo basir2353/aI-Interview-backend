@@ -74,36 +74,33 @@ export class AIInterviewerOrchestrator {
     return role === 'technical' ? 'Ethan' : 'ZaraAlex';
   }
 
-  private withGreetingIfFirstTurn(state: InterviewState, reply: string): string {
-    const trimmed = (reply || '').trim();
-    if (state.turns.length > 0) return trimmed;
-
+  private buildWelcomeText(state: InterviewState): string {
     const codingMode = state.codingInterviewMode as CodingInterviewModeId | undefined;
-    if (state.resumeProfile && !state.welcomeDelivered) {
-      const welcome = buildInterviewWelcome(
-        {
-          candidateName: state.resumeProfile.candidateName,
-          positionTitle: undefined,
-          skills: state.resumeProfile.skills ?? [],
-          experience: state.resumeProfile.experience ?? [],
-          projects: state.resumeProfile.projects ?? [],
-          education: [],
-          certifications: [],
-          techStack: state.resumeProfile.techStack ?? [],
-          achievements: [],
-          workHistory: state.resumeProfile.experience ?? [],
-          summary: state.resumeProfile.summary ?? '',
-        },
-        codingMode
-      );
-      return `${welcome}\n\n${trimmed}`;
+    const interviewerName = this.interviewerName(state.role);
+    const positionTitle = state.positionTitle ?? state.resumeProfile?.positionTitle;
+    const profile = {
+      candidateName: state.resumeProfile?.candidateName,
+      positionTitle,
+      skills: state.resumeProfile?.skills ?? [],
+      experience: state.resumeProfile?.experience ?? [],
+      projects: state.resumeProfile?.projects ?? [],
+      education: [],
+      certifications: [],
+      techStack: state.resumeProfile?.techStack ?? [],
+      achievements: [],
+      workHistory: state.resumeProfile?.experience ?? [],
+      summary: state.resumeProfile?.summary ?? '',
+    };
+    if (state.resumeProfile || state.resumeContext?.trim()) {
+      return buildInterviewWelcome(profile, {
+        codingModeId: codingMode,
+        interviewerName,
+        roleLabel: this.roleLabel(state.role),
+      });
     }
-
-    const name = this.interviewerName(state.role);
-    const intro = `Hi, I'm ${name} from Intervion AI. Welcome to this ${this.roleLabel(state.role)} interview.`;
-    if (!trimmed) return `${intro} Let's get started.`;
-    if (/^(hi|hello|welcome|i'?m)\b/i.test(trimmed)) return trimmed;
-    return `${intro} ${trimmed}`;
+    const firstName = (state.resumeProfile?.candidateName || 'there').split(/\s+/)[0];
+    const positionLine = positionTitle ? ` for the ${positionTitle} position` : '';
+    return `Hi, I'm ${interviewerName} from Intervion AI. Welcome${positionLine}, ${firstName}. Today's ${this.roleLabel(state.role)} interview will focus on your experience, problem-solving, and communication. I've reviewed what you shared — let's get started.`;
   }
 
   private interviewerPromptExtras(state: InterviewState): string {
@@ -127,11 +124,11 @@ export class AIInterviewerOrchestrator {
     }
 
     const lastTurn = state.turns.length > 0 ? state.turns[state.turns.length - 1] : null;
-    if (!lastTurn || lastTurn.role !== 'ai') {
+    if (!lastTurn || lastTurn.role !== 'ai' || lastTurn.isIntro) {
       return { success: false, state: null, failureReason: 'no_pending_question' };
     }
 
-    const lastAiTurn = [...state.turns].reverse().find((t) => t.role === 'ai');
+    const lastAiTurn = [...state.turns].reverse().find((t) => t.role === 'ai' && !t.isIntro);
     const lastQuestionText = lastAiTurn?.content ?? '';
     const lastQuestionId = lastAiTurn?.questionId;
     const competencyIds = lastQuestionId
@@ -242,7 +239,52 @@ export class AIInterviewerOrchestrator {
     } else {
       rawReply = await this.getNextReplyInternal(state, next.questionText, next.questionId, next.phase);
     }
-    const reply = this.withGreetingIfFirstTurn(state, rawReply);
+
+    if (isFirstQuestion) {
+      const welcomeText = this.buildWelcomeText(state);
+      const introTurn = conversationManager.createTurn('ai', welcomeText, { isIntro: true });
+      await interviewSessionService.appendTurn(input.interviewId, introTurn);
+
+      const questionText = rawReply.trim();
+      let questionAvatarVideo: string | undefined;
+      try {
+        if (avatarService.isEnabled()) {
+          const avatarResult = await avatarService.generateAvatarWithTimeout({ text: questionText });
+          questionAvatarVideo = avatarResult.videoUrl;
+        }
+      } catch (err) {
+        console.error('Avatar generation failed (non-blocking):', err);
+      }
+      const questionTurn = conversationManager.createTurn('ai', questionText, {
+        questionId: next.questionId,
+        codingStarterCode: next.starterCode ?? undefined,
+        codingLanguage: next.language ?? undefined,
+        isCodingQuestion: next.isCodingQuestion ?? false,
+        avatarVideo: questionAvatarVideo,
+      });
+      await interviewSessionService.appendTurn(input.interviewId, questionTurn, {
+        phase: next.phase,
+        currentDifficulty: next.difficulty,
+      });
+
+      const s = await interviewSessionService.getState(input.interviewId);
+      if (s) {
+        s.welcomeDelivered = true;
+        await interviewSessionService.setState(input.interviewId, s);
+      }
+
+      const updatedState = await interviewSessionService.getState(input.interviewId);
+      return {
+        success: true,
+        state: updatedState ?? state,
+        reply: welcomeText,
+        avatarVideo: questionAvatarVideo,
+        questionId: next.questionId,
+        phase: next.phase,
+      };
+    }
+
+    const reply = rawReply.trim();
     let avatarVideo: string | undefined;
     try {
       if (avatarService.isEnabled()) {
@@ -263,13 +305,6 @@ export class AIInterviewerOrchestrator {
       phase: next.phase,
       currentDifficulty: next.difficulty,
     });
-    if (isFirstQuestion) {
-      const s = await interviewSessionService.getState(input.interviewId);
-      if (s) {
-        s.welcomeDelivered = true;
-        await interviewSessionService.setState(input.interviewId, s);
-      }
-    }
 
     const updatedState = await interviewSessionService.getState(input.interviewId);
     return {

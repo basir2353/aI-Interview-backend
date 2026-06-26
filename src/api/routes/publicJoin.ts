@@ -179,6 +179,18 @@ router.post(
 
     const codingInterviewMode = parseCodingModeFromFocusAreas(row.focus_areas);
 
+    let positionTitle: string | null | undefined = resumeProfile?.positionTitle;
+    if (!positionTitle && row.position_id) {
+      const { rows: posRows } = await query<{ title: string }>(
+        `SELECT title FROM positions WHERE id = $1 LIMIT 1`,
+        [row.position_id]
+      );
+      positionTitle = posRows[0]?.title ?? null;
+      if (resumeProfile && positionTitle) {
+        resumeProfile = { ...resumeProfile, positionTitle };
+      }
+    }
+
     const hasCodingQuestions = customQuestions.some((q) => q.isCodingQuestion);
     if (row.role === 'technical' && !hasCodingQuestions) {
       const defaultCoding: ScheduledCustomQuestion[] = [
@@ -195,6 +207,7 @@ router.post(
       positionId: row.position_id ?? undefined,
       resumeContext,
       resumeProfile,
+      positionTitle: positionTitle ?? undefined,
       codingInterviewMode,
       preferredDifficulty: row.preferred_difficulty ?? undefined,
       customQuestions,

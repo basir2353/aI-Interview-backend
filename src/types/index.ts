@@ -39,6 +39,8 @@ export interface Turn {
   isCodingQuestion?: boolean;
   /** For AI turns: optional talking-head video URL (SadTalker + Wav2Lip + Coqui TTS). */
   avatarVideo?: string;
+  /** Welcome / intro only — not a scorable interview question */
+  isIntro?: boolean;
 }
 
 export interface AnswerEvaluation {
@@ -82,11 +84,14 @@ export interface InterviewState {
     experience: string[];
     projects: string[];
     summary: string;
+    positionTitle?: string;
   };
   /** Coding interview style when technical (dsa, frontend, etc.) */
   codingInterviewMode?: string;
   /** Whether welcome overview was already delivered in first AI turn */
   welcomeDelivered?: boolean;
+  /** Job / position title for personalized welcome */
+  positionTitle?: string;
   /** Recruiter-specified duration in minutes */
   durationMinutes?: number;
   /** Token budget used (approximate) for context window management */

@@ -608,8 +608,15 @@ router.get('/me', recruiterAuthMiddleware, async (req: Request, res: Response) =
   if (!userId) {
     return res.status(401).json({ error: 'Invalid token payload' });
   }
-  const { rows } = await query<{ id: string; email: string; name: string | null; is_active: boolean }>(
-    `SELECT id, email, name, is_active FROM users WHERE id = $1 LIMIT 1`,
+  const { rows } = await query<{
+    id: string;
+    email: string;
+    name: string | null;
+    is_active: boolean;
+    company_name: string | null;
+    interviewer_persona: string | null;
+  }>(
+    `SELECT id, email, name, is_active, company_name, interviewer_persona FROM users WHERE id = $1 LIMIT 1`,
     [userId]
   );
   if (rows.length === 0) {
@@ -618,8 +625,70 @@ router.get('/me', recruiterAuthMiddleware, async (req: Request, res: Response) =
   if (!rows[0].is_active) {
     return res.status(403).json({ error: 'Recruiter access is disabled by admin' });
   }
-  return res.json({ recruiter: rows[0] });
+  return res.json({ recruiter: mapRecruiterIdentity(rows[0]) });
 });
+
+router.patch(
+  '/me',
+  recruiterAuthMiddleware,
+  validate([
+    body('companyName').optional({ values: 'null' }).isString().isLength({ max: 255 }),
+    body('interviewerPersona').optional().isIn(INTERVIEWER_PERSONAS),
+  ]),
+  async (req: Request, res: Response) => {
+    const user = (req as Request & { user: { userId?: string } }).user;
+    const userId = user.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Invalid token payload' });
+    }
+    const active = await ensureActiveRecruiter(userId);
+    if (!active) {
+      return res.status(403).json({ error: 'Recruiter access is disabled by admin' });
+    }
+    const { companyName, interviewerPersona } = req.body as {
+      companyName?: string | null;
+      interviewerPersona?: InterviewerPersona;
+    };
+    if (companyName === undefined && interviewerPersona === undefined) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+    const updates: string[] = [];
+    const params: unknown[] = [];
+    let i = 1;
+    if (companyName !== undefined) {
+      updates.push(`company_name = $${i}`);
+      params.push(companyName?.trim() || null);
+      i++;
+    }
+    if (interviewerPersona !== undefined) {
+      updates.push(`interviewer_persona = $${i}`);
+      params.push(interviewerPersona);
+      i++;
+    }
+    updates.push('updated_at = NOW()');
+    params.push(userId);
+    try {
+      const { rows } = await query<{
+        id: string;
+        email: string;
+        name: string | null;
+        company_name: string | null;
+        interviewer_persona: string | null;
+      }>(
+        `UPDATE users SET ${updates.join(', ')} WHERE id = $${i} AND role = 'recruiter'
+         RETURNING id, email, name, company_name, interviewer_persona`,
+        params
+      );
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'Recruiter not found' });
+      }
+      return res.json({ recruiter: mapRecruiterIdentity(rows[0]) });
+    } catch (e) {
+      console.error('Recruiter PATCH /me error', e);
+      return res.status(500).json({ error: 'Failed to update recruiter profile' });
+    }
+  }
+);
 
 router.get('/schedules', recruiterAuthMiddleware, async (req: Request, res: Response) => {
   const user = (req as Request & { user: { userId?: string } }).user;

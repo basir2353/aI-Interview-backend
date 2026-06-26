@@ -98,7 +98,7 @@ export class AIInterviewerOrchestrator {
         roleLabel: this.roleLabel(state.role),
       });
     }
-    const firstName = (state.resumeProfile?.candidateName || 'there').split(/\s+/)[0];
+    const firstName = (profile.candidateName || 'there').split(/\s+/)[0];
     const positionLine = positionTitle ? ` for the ${positionTitle} position` : '';
     return `Hi, I'm ${interviewerName} from Intervion AI. Welcome${positionLine}, ${firstName}. Today's ${this.roleLabel(state.role)} interview will focus on your experience, problem-solving, and communication. I've reviewed what you shared — let's get started.`;
   }

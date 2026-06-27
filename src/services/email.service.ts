@@ -6,6 +6,31 @@ function normalizeMailSecret(value: string): string {
   return value.trim().replace(/\s+/g, '');
 }
 
+const SMTP_CONNECT_TIMEOUT_MS = 12_000;
+const SMTP_VERIFY_TIMEOUT_MS = 10_000;
+const SMTP_SEND_TIMEOUT_MS = 25_000;
+
+function smtpTransportOptions(auth: { user: string; pass: string }) {
+  return {
+    auth,
+    connectionTimeout: SMTP_CONNECT_TIMEOUT_MS,
+    greetingTimeout: SMTP_CONNECT_TIMEOUT_MS,
+    socketTimeout: SMTP_SEND_TIMEOUT_MS,
+  };
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** Whether SMTP auth + service/host are present in env. */
 export function isMailConfigured(): boolean {
   const user = config.mail.user;
@@ -37,13 +62,13 @@ function getTransporter(): nodemailer.Transporter | null {
     effectiveService
       ? {
           service: effectiveService,
-          auth: { user, pass },
+          ...smtpTransportOptions({ user, pass }),
         }
       : {
           host,
           port: config.mail.port,
           secure: config.mail.secure,
-          auth: { user, pass },
+          ...smtpTransportOptions({ user, pass }),
           ...(config.mail.secure
             ? {}
             : {
@@ -70,7 +95,7 @@ export async function verifyMailConnection(): Promise<{ ok: boolean; error?: str
   }
 
   try {
-    await tx.verify();
+    await withTimeout(tx.verify(), SMTP_VERIFY_TIMEOUT_MS, 'SMTP verify');
     return { ok: true };
   } catch (e) {
     const err = e instanceof Error ? e.message : 'SMTP verify failed';
@@ -118,14 +143,18 @@ export async function sendInterviewScheduleEmail(input: {
       message: input.message,
     });
 
-    await tx.sendMail({
-      from: config.mail.from,
-      to: input.to,
-      replyTo: config.mail.replyTo || undefined,
-      subject,
-      text: `Your interview is scheduled.\n\nRole: ${input.role}\nScheduled at: ${scheduledAtText}\n${input.recruiterName ? `Recruiter: ${input.recruiterName}\n` : ''}${input.message ? `\nMessage from recruiter:\n${input.message}\n` : ''}\nJoin interview: ${input.joinUrl}\n`,
-      html,
-    });
+    await withTimeout(
+      tx.sendMail({
+        from: config.mail.from,
+        to: input.to,
+        replyTo: config.mail.replyTo || undefined,
+        subject,
+        text: `Your interview is scheduled.\n\nRole: ${input.role}\nScheduled at: ${scheduledAtText}\n${input.recruiterName ? `Recruiter: ${input.recruiterName}\n` : ''}${input.message ? `\nMessage from recruiter:\n${input.message}\n` : ''}\nJoin interview: ${input.joinUrl}\n`,
+        html,
+      }),
+      SMTP_SEND_TIMEOUT_MS,
+      'SMTP send'
+    );
     console.info(`[Mail] Interview email sent to ${input.to} from ${config.mail.from}`);
 
     return { sent: true };
@@ -156,14 +185,18 @@ export async function sendPasswordResetEmail(input: {
     const subject = 'Your password reset code — AI Interviewer';
     const html = passwordResetHtml(input.code, input.resetLink);
 
-    await tx.sendMail({
-      from: config.mail.from,
-      to: input.to,
-      replyTo: config.mail.replyTo || undefined,
-      subject,
-      text: `Your password reset code: ${input.code}\n\nEnter it on the reset password page. The code expires in 15 minutes.\n${input.resetLink ? `Reset link: ${input.resetLink}\n` : ''}\nIf you did not request this, ignore this email.`,
-      html,
-    });
+    await withTimeout(
+      tx.sendMail({
+        from: config.mail.from,
+        to: input.to,
+        replyTo: config.mail.replyTo || undefined,
+        subject,
+        text: `Your password reset code: ${input.code}\n\nEnter it on the reset password page. The code expires in 15 minutes.\n${input.resetLink ? `Reset link: ${input.resetLink}\n` : ''}\nIf you did not request this, ignore this email.`,
+        html,
+      }),
+      SMTP_SEND_TIMEOUT_MS,
+      'SMTP send'
+    );
     console.info(`[Mail] Password reset email sent to ${input.to} from ${config.mail.from}`);
     return { sent: true };
   } catch (e) {

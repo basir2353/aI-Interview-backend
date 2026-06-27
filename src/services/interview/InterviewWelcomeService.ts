@@ -11,9 +11,9 @@ export function formatFirstName(name?: string): string {
 
 /**
  * Three spoken beats — like a real interviewer on a call:
- * 1) Hello + interviewer introduces themselves (NO candidate name yet)
- * 2) Candidate name + role + light resume ack
- * 3) What to expect + handoff to first question
+ * 1) Interviewer intro + thanks for joining (no candidate name yet)
+ * 2) Welcome by name + role context + light resume ack
+ * 3) Set expectations before the first question
  */
 export function buildInterviewWelcomeParts(
   profile: ResumeProfile,
@@ -28,23 +28,26 @@ export function buildInterviewWelcomeParts(
   const roleLabel = options?.roleLabel ?? 'technical';
 
   const part1 = [
-    `Hello! Hi there.`,
-    `I'm ${interviewer} — I'll be your interviewer today.`,
-    `Thanks for making the time to join me.`,
+    `Hi there — thanks for joining today.`,
+    `I'm ${interviewer}, and I'll be your interviewer for this session.`,
   ].join(' ');
 
   const nameLine = firstName
-    ? `${firstName}, it's really good to meet you.`
-    : `It's really good to meet you.`;
+    ? `${firstName}, great to meet you.`
+    : `Great to meet you.`;
   const roleLine = profile.positionTitle
-    ? `I understand you're here for the ${profile.positionTitle} role.`
-    : `I understand you're here for your ${roleLabel} interview today.`;
-  const part2 = [nameLine, roleLine, `I've had a chance to look over your background before we started.`].join(' ');
+    ? `You're here for the ${profile.positionTitle} role — I've had a quick look at your background ahead of time.`
+    : `You're here for your ${roleLabel} interview today — I've had a quick look at what you shared with us.`;
+  const part2 = [nameLine, roleLine].join(' ');
 
   const sessionLine = options?.codingModeId
-    ? `We'll keep this relaxed and conversational — some experience questions, problem-solving, and a bit of ${CODING_INTERVIEW_MODES[options.codingModeId].label.toLowerCase()} along the way.`
-    : `We'll keep this relaxed and conversational — your experience, how you think through problems, and a few specifics from your work. No trick questions.`;
-  const part3 = [sessionLine, `Take your time with answers. When you're ready, we'll dive in.`].join(' ');
+    ? `We'll keep this pretty conversational — a bit about your experience, some problem-solving, and maybe a little ${CODING_INTERVIEW_MODES[options.codingModeId].label.toLowerCase()} if we get there.`
+    : `Think of this as a conversation, not a test — we'll talk about your experience, how you approach problems, and a few things from your work.`;
+  const part3 = [
+    sessionLine,
+    `No need to rush — take your time with each answer.`,
+    `Alright, let's get started.`,
+  ].join(' ');
 
   return [part1, part2, part3];
 }
@@ -79,11 +82,11 @@ export function buildFirstWarmUpQuestion(input: {
   if (input.codingModeId) {
     const modeLabel = CODING_INTERVIEW_MODES[input.codingModeId].label.toLowerCase();
     return firstName
-      ? `Alright, ${firstName} — let's start simple. Tell me a bit about yourself and the ${modeLabel} experience you're bringing to ${roleRef}.`
-      : `Alright — let's start simple. Tell me a bit about yourself and the ${modeLabel} experience you're bringing to ${roleRef}.`;
+      ? `So to kick things off, ${firstName} — in your own words, tell me a bit about yourself and the ${modeLabel} experience you're bringing to ${roleRef}.`
+      : `So to kick things off — in your own words, tell me a bit about yourself and the ${modeLabel} experience you're bringing to ${roleRef}.`;
   }
 
   return firstName
-    ? `So, to kick things off — ${firstName}, walk me through your background in your own words, and what drew you to ${roleRef}.`
-    : `So, to kick things off — walk me through your background in your own words, and what drew you to ${roleRef}.`;
+    ? `So to kick things off, ${firstName} — walk me through your background in your own words, and what drew you to ${roleRef}.`
+    : `So to kick things off — walk me through your background in your own words, and what drew you to ${roleRef}.`;
 }

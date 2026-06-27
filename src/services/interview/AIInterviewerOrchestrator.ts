@@ -101,13 +101,13 @@ export class AIInterviewerOrchestrator {
     const firstName = formatFirstName(profile.candidateName);
     const roleLabel = this.roleLabel(state.role);
     const positionBit = positionTitle
-      ? `I understand you're here for the ${positionTitle} role.`
-      : `I understand you're here for your ${roleLabel} interview today.`;
-    const nameBit = firstName ? `${firstName}, it's really good to meet you.` : `It's really good to meet you.`;
+      ? `You're here for the ${positionTitle} role — I've had a quick look at what you shared with us.`
+      : `You're here for your ${roleLabel} interview today — I've had a quick look at what you shared with us.`;
+    const nameBit = firstName ? `${firstName}, great to meet you.` : `Great to meet you.`;
     return [
-      `Hello! Hi there. I'm ${interviewerName} — I'll be your interviewer today. Thanks for making the time to join me.`,
-      `${nameBit} ${positionBit} I've had a chance to review what you shared with us.`,
-      `We'll keep this relaxed and conversational. Take your time with answers. When you're ready, we'll dive in.`,
+      `Hi there — thanks for joining today. I'm ${interviewerName}, and I'll be your interviewer for this session.`,
+      `${nameBit} ${positionBit}`,
+      `Think of this as a conversation, not a test. No need to rush — take your time with each answer. Alright, let's get started.`,
     ];
   }
 

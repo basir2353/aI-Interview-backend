@@ -2,10 +2,26 @@ import nodemailer from 'nodemailer';
 import { config } from '../config';
 import { passwordResetHtml, interviewScheduleHtml } from './emailTemplates';
 
-/** Build transporter from current config so updated MAIL_* in .env are used after restart (no stale cache). */
-function getTransporter(): nodemailer.Transporter | null {
+function normalizeMailSecret(value: string): string {
+  return value.trim().replace(/\s+/g, '');
+}
+
+/** Whether SMTP auth + service/host are present in env. */
+export function isMailConfigured(): boolean {
   const user = config.mail.user;
   const pass = config.mail.pass;
+  const hasAuth = Boolean(user && pass);
+  const explicitService = config.mail.service;
+  const host = config.mail.host;
+  const inferredGmailService =
+    !explicitService && !host && hasAuth && user.toLowerCase().endsWith('@gmail.com');
+  return hasAuth && Boolean(explicitService || host || inferredGmailService);
+}
+
+/** Build transporter from current config (no stale cache — restart after env changes). */
+function getTransporter(): nodemailer.Transporter | null {
+  const user = config.mail.user.trim();
+  const pass = normalizeMailSecret(config.mail.pass);
   const hasAuth = Boolean(user && pass);
   const explicitService = config.mail.service;
   const host = config.mail.host;
@@ -28,8 +44,49 @@ function getTransporter(): nodemailer.Transporter | null {
           port: config.mail.port,
           secure: config.mail.secure,
           auth: { user, pass },
+          ...(config.mail.secure
+            ? {}
+            : {
+                requireTLS: true,
+                tls: { minVersion: 'TLSv1.2' as const },
+              }),
         }
   );
+}
+
+/** Verify SMTP credentials at startup (Railway / production). */
+export async function verifyMailConnection(): Promise<{ ok: boolean; error?: string }> {
+  if (!isMailConfigured()) {
+    return {
+      ok: false,
+      error:
+        'Mail not configured. Set MAIL_SERVICE (or MAIL_HOST), MAIL_USER, MAIL_PASS, and MAIL_FROM.',
+    };
+  }
+
+  const tx = getTransporter();
+  if (!tx) {
+    return { ok: false, error: 'Mail transporter could not be created.' };
+  }
+
+  try {
+    await tx.verify();
+    return { ok: true };
+  } catch (e) {
+    const err = e instanceof Error ? e.message : 'SMTP verify failed';
+    return { ok: false, error: err };
+  }
+}
+
+export function getMailStatus() {
+  return {
+    configured: isMailConfigured(),
+    from: config.mail.from,
+    service: config.mail.service || (config.mail.host ? 'custom-smtp' : ''),
+    host: config.mail.host || undefined,
+    port: config.mail.port,
+    user: config.mail.user ? `${config.mail.user.slice(0, 3)}***` : '',
+  };
 }
 
 export async function sendInterviewScheduleEmail(input: {
@@ -81,9 +138,6 @@ export async function sendInterviewScheduleEmail(input: {
 
 /**
  * Send password reset code to the user (candidate or recruiter).
- * Who sends: The backend sends this email using your .env mail config (MAIL_FROM, MAIL_USER, MAIL_PASS).
- * Who receives: The user who requested the reset — the address they entered on "Forgot password?" (input.to).
- * Who triggers: The user themselves (self-service from candidate or recruiter login page). No admin sends it.
  */
 export async function sendPasswordResetEmail(input: {
   to: string;

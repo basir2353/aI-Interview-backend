@@ -73,6 +73,25 @@ app.get('/health/db', async (_req, res) => {
   }
 });
 
+app.get('/health/mail', async (_req, res) => {
+  const { verifyMailConnection, getMailStatus } = await import('../services/email.service');
+  const status = getMailStatus();
+  if (!status.configured) {
+    res.status(503).json({
+      status: 'not_configured',
+      ...status,
+      hint: 'Set MAIL_SERVICE, MAIL_USER, MAIL_PASS, MAIL_FROM on Railway Variables.',
+    });
+    return;
+  }
+  const verify = await verifyMailConnection();
+  res.status(verify.ok ? 200 : 503).json({
+    status: verify.ok ? 'ok' : 'error',
+    ...status,
+    error: verify.error,
+  });
+});
+
 app.use(`${config.apiPrefix}/interview`, interviewRoutes);
 app.use(`${config.apiPrefix}/report`, reportRoutes);
 app.use(`${config.apiPrefix}/admin`, adminRoutes);

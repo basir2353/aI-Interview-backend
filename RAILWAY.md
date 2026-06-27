@@ -84,7 +84,65 @@ Railway sets `PORT` and `DATABASE_URL` automatically — do not override `PORT`.
 | `SPEACHES_API_KEY` | Same as `API_KEY` you set on the Speaches service |
 | `SPEACHES_MODEL` | Default `Systran/faster-distil-whisper-small.en` |
 | `OPENAI_API_KEY` | OpenAI Whisper when `STT_PROVIDER=openai` |
-| `MAIL_*` | Email settings for interview invites |
+| `MAIL_*` | **SMTP email** for interview invites + password reset (see below) |
+
+## Live SMTP email on Railway (Gmail)
+
+The app sends **email via SMTP** (not SMS). When configured, emails go out for:
+
+- Interview schedule invites (join link to candidate)
+- Recruiter / candidate password reset codes
+
+### 1. Gmail App Password
+
+1. Enable 2-Step Verification on your Google account.
+2. Create an **App Password**: [Google App Passwords](https://myaccount.google.com/apppasswords)
+3. Copy the 16-character password **without spaces** (or paste with spaces — the backend strips them).
+
+### 2. Railway Variables (backend service)
+
+In **Railway → your backend service → Variables**, add:
+
+```env
+MAIL_SERVICE=gmail
+MAIL_USER=your-sender@gmail.com
+MAIL_PASS=your-16-char-app-password
+MAIL_FROM=your-sender@gmail.com
+MAIL_REPLY_TO=your-sender@gmail.com
+FRONTEND_URL=https://a-i-interview-frontend.vercel.app
+```
+
+Also ensure `DATABASE_URL` is linked from PostgreSQL.
+
+### 3. Redeploy
+
+Redeploy the backend after saving variables. Check deploy logs for:
+
+```text
+[Mail] Sender configured: your-sender@gmail.com
+[Mail] SMTP connection verified — interview invites and password resets will send.
+```
+
+If verify fails, check `MAIL_PASS` (must be App Password, not account password).
+
+### 4. Test
+
+- **Health:** `GET https://<your-backend>.up.railway.app/health/mail` → `{ "status": "ok" }`
+- **Interview:** Schedule an interview from recruiter dashboard → candidate receives join link
+- **Reset:** Use Forgot password on recruiter/candidate login
+
+### Generic SMTP (SendGrid, Mailgun, Amazon SES)
+
+```env
+MAIL_HOST=smtp.example.com
+MAIL_PORT=587
+MAIL_SECURE=false
+MAIL_USER=...
+MAIL_PASS=...
+MAIL_FROM=noreply@yourdomain.com
+```
+
+Do **not** set `MAIL_SERVICE` when using `MAIL_HOST`.
 
 ## After deploy
 
@@ -167,3 +225,4 @@ The backend also seeds candidate + competencies automatically on startup via `bo
   - Redeploy after removing `PORT`. Then `GET /health` should return `{"status":"ok"}`.
 - **CORS / Socket.io** — Set `FRONTEND_URL` to your exact frontend origin (production: `https://a-i-interview-frontend.vercel.app`). For Vercel preview URLs, add `CORS_ORIGINS=https://your-preview.vercel.app`.
 - **Transcription timeout** — CPU transcription is slow; consider `STT_PROVIDER=openai` for faster cloud STT.
+- **Emails not sending** — Open `GET /health/mail` on your backend URL. If `not_configured`, add `MAIL_*` vars in Railway. If `error`, use a Gmail **App Password** (not your login password). Redeploy after changing variables.

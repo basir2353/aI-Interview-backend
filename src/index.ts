@@ -25,10 +25,24 @@ function getSocketCorsOrigins(): string[] {
 }
 
 async function initializeServices(io: SocketIOServer): Promise<void> {
-  if (config.mail.user && config.mail.from) {
-    logger.info(`[Mail] Sender configured: ${config.mail.from} (restart backend after changing .env)`);
+  const { verifyMailConnection, isMailConfigured } = await import('./services/email.service');
+
+  if (isMailConfigured()) {
+    logger.info(`[Mail] Sender configured: ${config.mail.from}`);
+    const verify = await verifyMailConnection();
+    if (verify.ok) {
+      logger.info('[Mail] SMTP connection verified — interview invites and password resets will send.');
+    } else {
+      logger.error(
+        `[Mail] SMTP verify failed: ${verify.error}. ` +
+          'On Railway: set MAIL_SERVICE, MAIL_USER, MAIL_PASS, MAIL_FROM in Variables and redeploy. ' +
+          'For Gmail use an App Password (not your login password).'
+      );
+    }
   } else {
-    logger.warn('[Mail] Not configured. Set MAIL_USER, MAIL_PASS, MAIL_FROM in .env to send emails.');
+    logger.warn(
+      '[Mail] Not configured. Set MAIL_SERVICE (or MAIL_HOST), MAIL_USER, MAIL_PASS, MAIL_FROM to send emails.'
+    );
   }
 
   logger.info('Initializing services...');

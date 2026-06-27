@@ -366,19 +366,23 @@ router.post(
         focusAreas?: string;
         durationMinutes?: number;
       };
-      const { rows: recruiterRows } = await query<{ name: string | null }>(
-        `SELECT name FROM users WHERE id = $1 LIMIT 1`,
+      const { rows: recruiterRows } = await query<{ name: string | null; company_name: string | null }>(
+        `SELECT name, company_name FROM users WHERE id = $1 LIMIT 1`,
         [userId]
       );
       const recruiterName = recruiterRows[0]?.name ?? null;
+      const recruiterCompany = recruiterRows[0]?.company_name ?? null;
       const { rows } = await query<{
         application_id: string;
         candidate_email: string | null;
         candidate_name: string | null;
         position_id: string;
         position_role: string;
+        position_title: string | null;
+        position_company: string | null;
       }>(
-        `SELECT a.id AS application_id, c.email AS candidate_email, c.name AS candidate_name, p.id AS position_id, p.role AS position_role
+        `SELECT a.id AS application_id, c.email AS candidate_email, c.name AS candidate_name,
+                p.id AS position_id, p.role AS position_role, p.title AS position_title, p.company_name AS position_company
          FROM applications a
          INNER JOIN positions p ON p.id = a.position_id
          INNER JOIN candidates c ON c.id = a.candidate_id
@@ -444,6 +448,9 @@ router.post(
         scheduledAt: created.scheduled_at,
         joinUrl,
         message: toEmailSafeMessage(message),
+        companyName: row.position_company || recruiterCompany,
+        jobTitle: row.position_title || undefined,
+        durationMinutes: durationMinutes ?? null,
       });
       await query(
         `UPDATE scheduled_interviews
@@ -779,11 +786,22 @@ router.post(
         customQuestionsRaw: customQuestions,
         codingQuestionsRaw: codingQuestions,
       });
-      const { rows: recruiterRows } = await query<{ name: string | null }>(
-        `SELECT name FROM users WHERE id = $1 LIMIT 1`,
+      const { rows: recruiterRows } = await query<{ name: string | null; company_name: string | null }>(
+        `SELECT name, company_name FROM users WHERE id = $1 LIMIT 1`,
         [userId]
       );
       const recruiterName = recruiterRows[0]?.name ?? null;
+      const recruiterCompany = recruiterRows[0]?.company_name ?? null;
+      let jobTitle: string | undefined;
+      let positionCompany: string | null = null;
+      if (positionId) {
+        const { rows: posRows } = await query<{ title: string; company_name: string | null }>(
+          `SELECT title, company_name FROM positions WHERE id = $1 LIMIT 1`,
+          [positionId]
+        );
+        jobTitle = posRows[0]?.title ?? undefined;
+        positionCompany = posRows[0]?.company_name ?? null;
+      }
       const joinToken = crypto.randomBytes(32).toString('hex');
       const { rows } = await query<{
         id: string;
@@ -825,6 +843,9 @@ router.post(
         scheduledAt: row.scheduled_at,
         joinUrl,
         message: toEmailSafeMessage(message),
+        companyName: positionCompany || recruiterCompany,
+        jobTitle,
+        durationMinutes: durationMinutes ?? null,
       });
       await query(
         `UPDATE scheduled_interviews

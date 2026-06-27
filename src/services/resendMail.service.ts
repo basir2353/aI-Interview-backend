@@ -82,9 +82,12 @@ export async function sendInterviewScheduleViaResend(input: {
   scheduledAt: string;
   joinUrl: string;
   message?: string;
+  companyName?: string | null;
+  jobTitle?: string | null;
+  durationMinutes?: number | null;
 }): Promise<{ sent: boolean; error?: string }> {
   const scheduledAtText = new Date(input.scheduledAt).toLocaleString();
-  const subject = `Your interview is scheduled — ${input.role}`;
+  const subject = `Interview invitation — ${input.jobTitle?.trim() || input.role}`;
   const html = interviewScheduleHtml({
     candidateName: input.candidateName,
     recruiterName: input.recruiterName,
@@ -92,6 +95,9 @@ export async function sendInterviewScheduleViaResend(input: {
     scheduledAt: scheduledAtText,
     joinUrl: input.joinUrl,
     message: input.message,
+    companyName: input.companyName,
+    jobTitle: input.jobTitle,
+    durationMinutes: input.durationMinutes,
   });
   const text = interviewScheduleText({
     candidateName: input.candidateName,
@@ -100,6 +106,9 @@ export async function sendInterviewScheduleViaResend(input: {
     scheduledAt: scheduledAtText,
     joinUrl: input.joinUrl,
     message: input.message,
+    companyName: input.companyName,
+    jobTitle: input.jobTitle,
+    durationMinutes: input.durationMinutes,
   });
 
   const result = await sendViaResend({ to: input.to, subject, html, text });

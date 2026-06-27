@@ -28,20 +28,21 @@ async function initializeServices(io: SocketIOServer): Promise<void> {
   const { verifyMailConnection, isMailConfigured } = await import('./services/email.service');
 
   if (isMailConfigured()) {
-    logger.info(`[Mail] Sender configured: ${config.mail.from}`);
+    const { getMailStatus } = await import('./services/email.service');
+    const mailStatus = getMailStatus();
+    logger.info(`[Mail] Provider: ${mailStatus.provider}, from: ${mailStatus.from}`);
     const verify = await verifyMailConnection();
     if (verify.ok) {
-      logger.info('[Mail] SMTP connection verified — interview invites and password resets will send.');
+      logger.info('[Mail] Ready — interview invites and password resets will send.');
     } else {
       logger.error(
-        `[Mail] SMTP verify failed: ${verify.error}. ` +
-          'On Railway: set MAIL_SERVICE, MAIL_USER, MAIL_PASS, MAIL_FROM in Variables and redeploy. ' +
-          'For Gmail use an App Password (not your login password).'
+        `[Mail] Verify failed: ${verify.error}. ` +
+          'Set RESEND_API_KEY (recommended) or SMTP vars in Railway Variables and redeploy.'
       );
     }
   } else {
     logger.warn(
-      '[Mail] Not configured. Set MAIL_SERVICE (or MAIL_HOST), MAIL_USER, MAIL_PASS, MAIL_FROM to send emails.'
+      '[Mail] Not configured. Set RESEND_API_KEY (recommended) or SMTP vars to send emails.'
     );
   }
 

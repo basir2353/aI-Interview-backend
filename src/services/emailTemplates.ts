@@ -1,10 +1,10 @@
 /**
  * Professional HTML email templates. Inline styles only for email client compatibility.
- * Brand: AI Interviewer — accent #7c3aed (violet).
+ * Brand: Intervion — accent #7c3aed (violet).
  */
 const BRAND = {
-  name: 'AI Interviewer',
-  tagline: 'Smart, bias-aware interviews',
+  name: 'Intervion',
+  tagline: 'Smart, bias-aware AI interviews',
   accent: '#7c3aed',
   accentHover: '#6d28d9',
   text: '#1e1b4b',
@@ -175,4 +175,45 @@ export function interviewScheduleHtml(params: {
   </tr>
   ${footerBlock()}`;
   return wrapBody(content);
+}
+
+export function passwordResetText(code: string, resetLink?: string): string {
+  return [
+    `${BRAND.name} — Password reset`,
+    '',
+    `Your reset code: ${code}`,
+    'This code expires in 15 minutes.',
+    resetLink ? `Reset link: ${resetLink}` : '',
+    '',
+    "If you didn't request this, ignore this email.",
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function interviewScheduleText(params: {
+  candidateName?: string | null;
+  recruiterName?: string | null;
+  role: string;
+  scheduledAt: string;
+  joinUrl: string;
+  message?: string;
+}): string {
+  const greeting = params.candidateName ? `Hi ${params.candidateName},` : 'Hi,';
+  return [
+    `${BRAND.name} — Interview scheduled`,
+    '',
+    greeting,
+    '',
+    `Role: ${params.role}`,
+    `Date & time: ${params.scheduledAt}`,
+    params.recruiterName ? `Recruiter: ${params.recruiterName}` : '',
+    params.message ? `\nMessage from recruiter:\n${params.message}` : '',
+    '',
+    `Join interview: ${params.joinUrl}`,
+    '',
+    'Good luck — we look forward to speaking with you.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }

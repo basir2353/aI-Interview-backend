@@ -86,6 +86,51 @@ Railway sets `PORT` and `DATABASE_URL` automatically — do not override `PORT`.
 | `OPENAI_API_KEY` | OpenAI Whisper when `STT_PROVIDER=openai` |
 | `MAIL_*` | **SMTP email** for interview invites + password reset (see below) |
 
+## Live email on Railway (Resend — recommended)
+
+The app sends **email via Resend API** (preferred) or SMTP fallback.
+
+### Resend setup
+
+1. Create an account at [resend.com](https://resend.com) and get an API key.
+2. For testing, use `onboarding@resend.dev` as the sender (Resend sandbox).
+3. Add to **Railway → backend → Variables**:
+
+```env
+MAIL_PROVIDER=resend
+RESEND_API_KEY=re_xxxxxxxx
+RESEND_FROM=Intervion <onboarding@resend.dev>
+MAIL_REPLY_TO=your-email@gmail.com
+FRONTEND_URL=https://a-i-interview-frontend.vercel.app
+```
+
+4. Redeploy. Logs should show: `[Mail] Provider: resend, from: Intervion <onboarding@resend.dev>`
+
+5. Test: `GET /health/mail` → `{ "status": "ok", "provider": "resend" }`
+
+**Production:** Verify your own domain in Resend, then set e.g. `RESEND_FROM=Intervion <noreply@yourdomain.com>`.
+
+### Emails sent automatically
+
+| Event | Template |
+|-------|----------|
+| Interview scheduled | Branded invite with join link + role, date, recruiter |
+| Password reset | 6-digit code + optional reset link |
+
+Templates live in `backend/src/services/emailTemplates.ts` (Intervion branding).
+
+### SMTP fallback (Gmail, SendGrid, etc.)
+
+If you prefer SMTP instead of Resend:
+
+```env
+MAIL_PROVIDER=smtp
+MAIL_SERVICE=gmail
+MAIL_USER=...
+MAIL_PASS=...app-password...
+MAIL_FROM=...
+```
+
 ## Live SMTP email on Railway (Gmail)
 
 The app sends **email via SMTP** (not SMS). When configured, emails go out for:

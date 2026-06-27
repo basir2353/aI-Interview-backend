@@ -151,8 +151,18 @@ export const config = {
     pythonScriptPath: process.env.AVATAR_PYTHON_SCRIPT || path.join('..', 'ai-avatar', 'generate_avatar.py'),
   },
 
-  /** Mail used when the app sends email (e.g. password reset, interview schedule). From = MAIL_FROM; recipient = user who requested reset or candidate. */
+  /** Mail: Resend API (preferred on Railway) or SMTP fallback. */
   mail: {
+    provider: (() => {
+      const explicit = (process.env.MAIL_PROVIDER || '').toLowerCase();
+      if (explicit === 'resend' || explicit === 'smtp') return explicit;
+      return process.env.RESEND_API_KEY ? 'resend' : 'smtp';
+    })() as 'resend' | 'smtp',
+    resendApiKey: process.env.RESEND_API_KEY || '',
+    resendFrom:
+      process.env.RESEND_FROM ||
+      process.env.MAIL_FROM ||
+      'Intervion <onboarding@resend.dev>',
     service: process.env.MAIL_SERVICE || process.env.SMTP_SERVICE || '',
     host: process.env.MAIL_HOST || process.env.SMTP_HOST || process.env.EMAIL_HOST || '',
     port: parseInt(process.env.MAIL_PORT || process.env.SMTP_PORT || '587', 10),

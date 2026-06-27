@@ -44,17 +44,9 @@ router.post(
       }
 
       const result = await interviewSessionService.start({ candidateId: ensuredCandidateId, role, positionId });
-      const firstReply = await aiInterviewerOrchestrator.getNextReply({
-        interviewId: result.interviewId,
-      });
-      if (!firstReply.success) {
-        return res.status(500).json({ error: 'Failed to generate first interview question' });
-      }
       res.status(201).json({
         interviewId: result.interviewId,
-        state: firstReply.state ?? result.state,
-        firstReply: firstReply.reply,
-        avatarVideo: firstReply.avatarVideo,
+        state: result.state,
       });
     } catch (e) {
       console.error('Interview start error', e);
@@ -62,6 +54,25 @@ router.post(
     }
   }
 );
+
+/** POST /interview/:id/begin-live - Deliver welcome intro + first question when candidate enters live room */
+router.post('/:id/begin-live', validate([param('id').isUUID()]), async (req: Request, res: Response) => {
+  try {
+    const result = await aiInterviewerOrchestrator.ensureWelcomeDelivered(req.params.id);
+    if (!result.success || !result.state) {
+      return res.status(404).json({ error: 'Interview not found or session expired' });
+    }
+    res.json({
+      state: result.state,
+      firstIntro: result.reply,
+      alreadyDelivered: result.alreadyDelivered ?? false,
+      avatarVideo: result.avatarVideo,
+    });
+  } catch (e) {
+    console.error('Begin live error', e);
+    res.status(500).json({ error: 'Failed to begin live interview' });
+  }
+});
 
 /** POST /interview/:id/answer - Submit candidate answer and get next AI reply */
 router.post(

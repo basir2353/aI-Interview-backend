@@ -7,7 +7,6 @@ import { Router, Request, Response } from 'express';
 import { param } from 'express-validator';
 import { query } from '../../db/client';
 import { interviewSessionService } from '../../services/interview/InterviewSessionService';
-import { aiInterviewerOrchestrator } from '../../services/interview/AIInterviewerOrchestrator';
 import { validate } from '../middleware/validate';
 import { buildResumeContext } from '../../services/interview/ResumeContextService';
 import { parseCodingModeFromFocusAreas } from '../../constants/codingInterviewModes';
@@ -107,23 +106,9 @@ router.post(
     if (row.interview_id && row.status === 'in_progress') {
       const state = await interviewSessionService.getState(row.interview_id);
       if (state) {
-        const hasAiTurn = state.turns.some((t) => t.role === 'ai');
-        if (!hasAiTurn) {
-          const firstReplyResult = await aiInterviewerOrchestrator.getNextReply({ interviewId: row.interview_id });
-          if (firstReplyResult.success) {
-            return res.json({
-              interviewId: row.interview_id,
-              alreadyStarted: true,
-              firstReply: firstReplyResult.reply,
-              state: firstReplyResult.state ?? state,
-            });
-          }
-        }
-        const lastTurn = state.turns[state.turns.length - 1];
         return res.json({
           interviewId: row.interview_id,
           alreadyStarted: true,
-          firstReply: lastTurn?.role === 'ai' ? lastTurn.content : null,
           state,
         });
       }
@@ -215,18 +200,13 @@ router.post(
       focusAreas: row.focus_areas?.trim() || undefined,
       durationMinutes: row.duration_minutes ?? undefined,
     });
-    const firstReplyResult = await aiInterviewerOrchestrator.getNextReply({ interviewId });
-    if (!firstReplyResult.success) {
-      return res.status(500).json({ error: 'Failed to generate first interview question' });
-    }
     await query(
       `UPDATE scheduled_interviews SET interview_id = $2, status = 'in_progress', updated_at = NOW() WHERE id = $1`,
       [row.id, interviewId]
     );
     res.status(201).json({
       interviewId,
-      firstReply: firstReplyResult.reply,
-      state: firstReplyResult.state ?? state,
+      state,
     });
   }
 );

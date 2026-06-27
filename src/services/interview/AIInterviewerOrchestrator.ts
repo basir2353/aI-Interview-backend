@@ -59,6 +59,10 @@ export interface GetNextReplyResult {
   phase?: string;
 }
 
+export interface EnsureWelcomeDeliveredResult extends GetNextReplyResult {
+  alreadyDelivered?: boolean;
+}
+
 export class AIInterviewerOrchestrator {
   private roleLabel(role: string): string {
     switch (role) {
@@ -216,6 +220,68 @@ export class AIInterviewerOrchestrator {
   }
 
   /**
+   * Deliver welcome intro beats + first question when the candidate enters the live room.
+   * Idempotent: safe to call once per session; repairs legacy sessions that only have a question turn.
+   */
+  async ensureWelcomeDelivered(interviewId: string): Promise<EnsureWelcomeDeliveredResult> {
+    const state = await interviewSessionService.getState(interviewId);
+    if (!state) {
+      return { success: false, state: null, reply: '' };
+    }
+
+    const aiTurns = state.turns.filter((t) => t.role === 'ai');
+    const introTurns = aiTurns.filter((t) => t.isIntro);
+    const questionTurn = aiTurns.find((t) => !t.isIntro);
+
+    if (state.welcomeDelivered && introTurns.length >= 1 && questionTurn) {
+      console.log('[Interview] Welcome already delivered', {
+        interviewId,
+        introBeats: introTurns.length,
+      });
+      return {
+        success: true,
+        state,
+        reply: introTurns[0]?.content ?? '',
+        alreadyDelivered: true,
+        questionId: questionTurn.questionId,
+        phase: state.phase,
+      };
+    }
+
+    if (aiTurns.length === 0) {
+      console.log('[Interview] Delivering welcome on live entry', { interviewId });
+      return this.getNextReply({ interviewId });
+    }
+
+    if (questionTurn && introTurns.length === 0) {
+      const welcomeParts = this.buildWelcomeParts(state);
+      const introOnlyTurns = welcomeParts.map((part) =>
+        conversationManager.createTurn('ai', part, { isIntro: true })
+      );
+      state.turns = [...introOnlyTurns, ...state.turns];
+      state.welcomeDelivered = true;
+      await interviewSessionService.setState(interviewId, state);
+      console.log('[Interview] Prepended missing welcome intro beats', {
+        interviewId,
+        introBeats: welcomeParts.length,
+      });
+      return {
+        success: true,
+        state,
+        reply: welcomeParts[0] ?? '',
+        questionId: questionTurn.questionId,
+        phase: state.phase,
+      };
+    }
+
+    return {
+      success: true,
+      state,
+      reply: aiTurns[0]?.content ?? '',
+    };
+  }
+
+  /**
    * Get the next AI reply (e.g. first greeting or after phase change). Does not
    * append a candidate turn; use this for "start interview" or when advancing phase.
    */
@@ -286,6 +352,12 @@ export class AIInterviewerOrchestrator {
       }
 
       const updatedState = await interviewSessionService.getState(input.interviewId);
+      console.log('[Interview] Welcome delivered', {
+        interviewId: input.interviewId,
+        introBeats: welcomeParts.length,
+        introPreview: welcomeParts[0]?.slice(0, 80),
+        questionPreview: questionText.slice(0, 80),
+      });
       return {
         success: true,
         state: updatedState ?? state,

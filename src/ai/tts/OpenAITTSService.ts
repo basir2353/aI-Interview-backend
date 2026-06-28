@@ -13,7 +13,7 @@ export class OpenAITTSService implements ITTSService {
         }
     }
 
-    async synthesize(text: string): Promise<Buffer> {
+    async synthesize(text: string, options?: import('./types').TTSOptions): Promise<Buffer> {
         if (!this.openai) {
             throw new Error('OpenAI API key missing for TTS');
         }

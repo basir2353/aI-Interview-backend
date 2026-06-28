@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getTTSService } from '../../ai/tts';
-import { getSTTService } from '../../ai/stt';
+import { edgeTtsVoiceForLanguage } from '../../constants/ttsVoices';
 import { body } from 'express-validator';
 import { validate } from '../middleware/validate';
 import multer from 'multer';
@@ -8,32 +8,52 @@ import multer from 'multer';
 const router = Router();
 const upload = multer();
 
-/** POST /ai/tts - Generate speech from text */
+/** POST /ai/tts - Cloud TTS (Edge neural voices — Urdu, Arabic, English, …) */
 router.post(
     '/tts',
     validate([
-        body('text').isString().notEmpty().withMessage('Text is required'),
+        body('text').isString().notEmpty().isLength({ max: 4000 }).withMessage('Text is required'),
+        body('language').optional().isString(),
+        body('voice').optional().isString(),
     ]),
     async (req: Request, res: Response) => {
         try {
-            const { text } = req.body;
+            const { text, language, voice } = req.body as {
+                text: string;
+                language?: string;
+                voice?: string;
+            };
             const tts = getTTSService();
-            const audioBuffer = await tts.synthesize(text);
+            const audioBuffer = await tts.synthesize(text, {
+                language: language || 'en-US',
+                voice: voice || undefined,
+            });
 
             res.set({
                 'Content-Type': 'audio/mpeg',
                 'Content-Length': audioBuffer.length,
+                'Cache-Control': 'no-store',
             });
             res.send(audioBuffer);
-        } catch (e: any) {
+        } catch (e: unknown) {
             console.error('TTS Route Error:', e);
-            if (e.code === 'insufficient_quota') {
-                return res.status(429).json({ error: 'OpenAI quota exceeded' });
+            const err = e as { code?: string; message?: string };
+            if (err.code === 'insufficient_quota') {
+                return res.status(429).json({ error: 'TTS quota exceeded' });
             }
-            res.status(500).json({ error: 'Failed to generate speech' });
+            res.status(500).json({ error: err.message || 'Failed to generate speech' });
         }
     }
 );
+
+/** GET /ai/tts/voices/:language — voice id + label for a language (UI helper) */
+router.get('/tts/voices/:language', (req: Request, res: Response) => {
+    const language = req.params.language || 'en-US';
+    res.json({
+        language,
+        voice: edgeTtsVoiceForLanguage(language),
+    });
+});
 
 /** POST /ai/stt - Transcribe speech from audio file */
 router.post(
@@ -41,24 +61,24 @@ router.post(
     upload.single('audio'),
     async (req: Request, res: Response) => {
         try {
-            const file = (req as any).file;
+            const file = (req as Request & { file?: Express.Multer.File }).file;
             if (!file) {
                 return res.status(400).json({ error: 'Audio file is required' });
             }
 
+            const { getSTTService } = await import('../../ai/stt');
             const stt = getSTTService();
             const text = await stt.transcribe(file.buffer);
 
             res.json({ text });
-        } catch (e: any) {
+        } catch (e: unknown) {
             console.error('STT Route Error:', e);
-            const message = String(e?.message ?? '');
+            const message = String((e as Error)?.message ?? '');
             const backendUnavailable =
                 /whisper/i.test(message) ||
                 /transcription failed/i.test(message) ||
                 /enoent/i.test(message);
             if (backendUnavailable) {
-                // Fail-soft so frontend can continue with browser STT fallback
                 return res.json({
                     text: '',
                     warning: 'Local STT backend unavailable; using fallback',

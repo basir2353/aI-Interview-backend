@@ -103,6 +103,15 @@ export const config = {
     },
   },
 
+  /** Text-to-speech: edge = Microsoft Edge neural (Urdu/Arabic/etc., free); openai = OpenAI TTS API. */
+  tts: {
+    provider: (() => {
+      const p = (process.env.TTS_PROVIDER || 'edge').toLowerCase();
+      if (p === 'openai' || p === 'edge') return p;
+      return 'edge';
+    })() as 'edge' | 'openai',
+  },
+
   storage: {
     endpoint: process.env.STORAGE_ENDPOINT,
     bucket: process.env.STORAGE_BUCKET || 'interview-recordings',

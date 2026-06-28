@@ -392,8 +392,6 @@ async function runLocalWhisper(
     language,
     '--no-timestamps',
     '-otxt',
-    '-bs',
-    '5',
   ];
   if (prompt?.trim()) {
     whisperArgs.push('--prompt', prompt.trim());
@@ -530,21 +528,23 @@ async function transcribeNormalizedAudio(
         langForPass,
         prompt
       );
-      let autoTranscript = '';
-      try {
-        autoTranscript = await runLocalWhisper(whisperBin, modelPath, normalizedPath, 'auto', prompt);
-      } catch (autoErr) {
-        logger.warn('[transcribe] auto pass failed; using primary language pass only', {
-          error: autoErr instanceof Error ? autoErr.message : String(autoErr),
-        });
+      transcript = primaryTranscript.trim();
+      if (transcript.length < 3) {
+        try {
+          const autoTranscript = await runLocalWhisper(whisperBin, modelPath, normalizedPath, 'auto', prompt);
+          transcript = pickBestTranscript(primaryTranscript, autoTranscript, langForPass);
+          logger.info('[transcribe] mixed-language fallback pass', {
+            primaryLang: langForPass,
+            primaryPreview: primaryTranscript.slice(0, 80),
+            autoPreview: autoTranscript.slice(0, 80),
+            chosenPreview: transcript.slice(0, 80),
+          });
+        } catch (autoErr) {
+          logger.warn('[transcribe] auto pass failed; using primary language pass only', {
+            error: autoErr instanceof Error ? autoErr.message : String(autoErr),
+          });
+        }
       }
-      transcript = pickBestTranscript(primaryTranscript, autoTranscript, langForPass);
-      logger.info('[transcribe] mixed-language merge', {
-        primaryLang: langForPass,
-        primaryPreview: primaryTranscript.slice(0, 80),
-        autoPreview: autoTranscript.slice(0, 80),
-        chosenPreview: transcript.slice(0, 80),
-      });
     } else {
       transcript = await runLocalWhisper(whisperBin, modelPath, normalizedPath, langForPass, prompt);
     }

@@ -14,14 +14,14 @@ export function normalizeInterviewLanguage(value: unknown): InterviewLanguageCod
   if (typeof value !== 'string') return DEFAULT_INTERVIEW_LANGUAGE;
   const trimmed = value.trim();
   if (isInterviewLanguageCode(trimmed)) return trimmed;
-  const lower = trimmed.toLowerCase();
-  if (lower === 'en' || lower === 'en-us' || lower === 'english') return 'en-US';
-  if (lower === 'es' || lower === 'spanish' || lower === 'español') return 'es';
-  if (lower === 'fr' || lower === 'french' || lower === 'français') return 'fr';
-  if (lower === 'de' || lower === 'german' || lower === 'deutsch') return 'de';
-  if (lower === 'hi' || lower === 'hindi' || lower === 'हिन्दी') return 'hi';
-  if (lower === 'ar' || lower === 'arabic' || lower === 'العربية') return 'ar';
-  if (lower === 'ur' || lower === 'urdu' || lower === 'اردو') return 'ur';
+  const lower = trimmed.toLowerCase().replace('_', '-');
+  if (lower === 'en' || lower.startsWith('en-') || lower === 'english') return 'en-US';
+  if (lower === 'es' || lower.startsWith('es-') || lower === 'spanish' || lower === 'español') return 'es';
+  if (lower === 'fr' || lower.startsWith('fr-') || lower === 'french' || lower === 'français') return 'fr';
+  if (lower === 'de' || lower.startsWith('de-') || lower === 'german' || lower === 'deutsch') return 'de';
+  if (lower === 'hi' || lower.startsWith('hi-') || lower === 'hindi' || lower === 'हिन्दी') return 'hi';
+  if (lower === 'ar' || lower.startsWith('ar-') || lower === 'arabic' || lower === 'العربية') return 'ar';
+  if (lower === 'ur' || lower.startsWith('ur-') || lower === 'urdu' || lower === 'اردو') return 'ur';
   return DEFAULT_INTERVIEW_LANGUAGE;
 }
 

@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'child_process';
 import { logger } from '../../config/logger';
 import { config } from '../../config';
 import { OpenAISTTService } from '../../ai/stt/OpenAISTTService';
-import { normalizeInterviewLanguage, whisperLanguageCode } from '../../constants/interviewLanguage';
+import { normalizeInterviewLanguage, whisperLanguageCode, whisperSttPrompt, DEFAULT_INTERVIEW_LANGUAGE, type InterviewLanguageCode } from '../../constants/interviewLanguage';
 
 const router = Router();
 let whisperBuildPromise: Promise<void> | null = null;
@@ -294,6 +294,8 @@ async function normalizeUploadedAudio(inputPath: string): Promise<string> {
     '16000',
     '-ac',
     '1',
+    '-af',
+    'highpass=f=80,lowpass=f=8000',
     '-c:a',
     'pcm_s16le',
     normalizedPath,
@@ -315,16 +317,105 @@ async function transcribeWithRemoteStt(filePath: string, language?: string): Pro
   return service.transcribe(buffer, { language });
 }
 
-function resolveTranscribeLanguage(raw: unknown): string {
+function resolveTranscribeRequest(body: { language?: string; mixed?: string }): {
+  primaryLang: string;
+  mixed: boolean;
+  interviewCode: InterviewLanguageCode;
+} {
+  const mixedFlag = body.mixed === '1' || body.mixed === 'true';
+  const raw = body.language;
   if (typeof raw === 'string' && raw.trim()) {
     const trimmed = raw.trim().toLowerCase();
-    if (trimmed === 'auto' || trimmed === 'mixed') return 'auto';
-    const normalized = normalizeInterviewLanguage(raw.trim());
-    // Auto-detect handles Arabic+English, Urdu+English, and other code-switching.
-    if (normalized !== 'en-US') return 'auto';
-    return whisperLanguageCode(normalized);
+    if (trimmed === 'auto') {
+      return {
+        primaryLang: process.env.WHISPER_LANGUAGE || 'auto',
+        mixed: true,
+        interviewCode: DEFAULT_INTERVIEW_LANGUAGE,
+      };
+    }
+    if (/^(en|ur|ar|es|fr|de|hi)$/.test(trimmed)) {
+      const interviewCode = normalizeInterviewLanguage(trimmed === 'en' ? 'en-US' : trimmed);
+      return {
+        primaryLang: trimmed,
+        mixed: mixedFlag || trimmed !== 'en',
+        interviewCode,
+      };
+    }
+    const interviewCode = normalizeInterviewLanguage(raw.trim());
+    const primaryLang = whisperLanguageCode(interviewCode);
+    return {
+      primaryLang,
+      mixed: mixedFlag || primaryLang !== 'en',
+      interviewCode,
+    };
   }
-  return process.env.WHISPER_LANGUAGE || 'auto';
+  return {
+    primaryLang: process.env.WHISPER_LANGUAGE || 'auto',
+    mixed: mixedFlag,
+    interviewCode: DEFAULT_INTERVIEW_LANGUAGE,
+  };
+}
+
+function scoreTranscript(text: string, primaryLang: string): number {
+  const t = text.trim();
+  if (!t) return 0;
+  let score = t.length;
+  if (primaryLang === 'ur' || primaryLang === 'ar') {
+    score += (t.match(/[\u0600-\u06FF]/g) || []).length * 4;
+  } else if (primaryLang === 'hi') {
+    score += (t.match(/[\u0900-\u097F]/g) || []).length * 4;
+  }
+  if (/[a-zA-Z]/.test(t)) score += 5;
+  return score;
+}
+
+function pickBestTranscript(a: string, b: string, primaryLang: string): string {
+  const scoreA = scoreTranscript(a, primaryLang);
+  const scoreB = scoreTranscript(b, primaryLang);
+  return scoreB > scoreA ? b : a;
+}
+
+async function runLocalWhisper(
+  whisperBin: string,
+  modelPath: string,
+  normalizedPath: string,
+  language: string,
+  prompt?: string
+): Promise<string> {
+  const outputTxtPath = `${normalizedPath}.txt`;
+  const whisperArgs = [
+    '-m',
+    modelPath,
+    '-f',
+    normalizedPath,
+    '-l',
+    language,
+    '--no-timestamps',
+    '-otxt',
+    '-bs',
+    '5',
+  ];
+  if (prompt?.trim()) {
+    whisperArgs.push('--prompt', prompt.trim());
+  }
+
+  logger.info('[transcribe] running whisper.cpp', { bin: whisperBin, args: whisperArgs.join(' ') });
+  const ws = await runCommand(whisperBin, whisperArgs, { timeoutMs: 240000 });
+
+  if (ws.code !== 0) {
+    const errOut = ws.stderr.slice(0, 2000) || ws.stdout.slice(0, 2000);
+    throw new Error(`whisper.cpp failed: ${errOut}`);
+  }
+
+  let transcript = extractTranscriptFromWhisperStdout(ws.stdout);
+  if (!transcript && fs.existsSync(outputTxtPath)) {
+    try {
+      transcript = fs.readFileSync(outputTxtPath, 'utf8').replace(/\s+/g, ' ').trim();
+    } catch {
+      // ignore
+    }
+  }
+  return transcript;
 }
 
 async function tryRemoteStt(normalizedPath: string, language?: string): Promise<string | null> {
@@ -362,9 +453,12 @@ function remoteSttConfigured(): boolean {
 async function transcribeNormalizedAudio(
   normalizedPath: string,
   res: Response,
-  language: string
+  ctx: { primaryLang: string; mixed: boolean; interviewCode: InterviewLanguageCode }
 ): Promise<Response> {
+  const { primaryLang, mixed, interviewCode } = ctx;
   assertReadableAudioFile(normalizedPath);
+
+  const remoteLang = primaryLang === 'auto' ? undefined : primaryLang;
 
   if (config.stt.provider === 'openai' || config.stt.provider === 'speaches') {
     if (!remoteSttConfigured()) {
@@ -374,7 +468,7 @@ async function transcribeNormalizedAudio(
         hasApiKey: Boolean(config.stt.remote.apiKey),
       });
     } else {
-      const remoteTranscript = await tryRemoteStt(normalizedPath, language === 'auto' ? undefined : language);
+      const remoteTranscript = await tryRemoteStt(normalizedPath, mixed ? undefined : remoteLang);
       if (remoteTranscript) {
         return res.json({ transcript: remoteTranscript });
       }
@@ -384,7 +478,7 @@ async function transcribeNormalizedAudio(
 
   const whisperBin = await resolveWhisperBin();
   if (!whisperBin) {
-    const remoteTranscript = await tryRemoteStt(normalizedPath, language === 'auto' ? undefined : language);
+    const remoteTranscript = await tryRemoteStt(normalizedPath, mixed ? undefined : remoteLang);
     if (remoteTranscript) {
       return res.json({ transcript: remoteTranscript });
     }
@@ -407,46 +501,75 @@ async function transcribeNormalizedAudio(
   const modelPath =
     process.env.WHISPER_MODEL_PATH ||
     pickFirstExisting([
-      path.join(process.cwd(), 'models', 'ggml-base.bin'),
       path.join(process.cwd(), 'models', 'ggml-small.bin'),
+      path.join(process.cwd(), 'models', 'ggml-base.bin'),
+      path.join(process.cwd(), 'whisper.cpp', 'models', 'ggml-small.bin'),
       path.join(process.cwd(), 'whisper.cpp', 'models', 'ggml-base.bin'),
       path.join(process.cwd(), 'models', 'ggml-base.en.bin'),
-      path.join(process.cwd(), 'whisper.cpp', 'models', 'ggml-base.en.bin'),
     ]);
 
   if (!modelPath) {
     return res.status(500).json({
       error: 'Whisper model not found',
       details:
-        'Expected models/ggml-base.bin (multilingual) or set WHISPER_MODEL_PATH. Download: curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin',
+        'Expected models/ggml-small.bin or ggml-base.bin. Set WHISPER_MODEL_PATH on Railway.',
     });
   }
 
-  const outputTxtPath = `${normalizedPath}.txt`;
-  const whisperArgs = [
-    '-m',
-    modelPath,
-    '-f',
-    normalizedPath,
-    '-l',
-    language,
-    '--no-timestamps',
-    '-otxt',
-  ];
+  const prompt = whisperSttPrompt(interviewCode);
 
-  logger.info('[transcribe] running whisper.cpp', { bin: whisperBin, args: whisperArgs.join(' ') });
-  const ws = await runCommand(whisperBin, whisperArgs, { timeoutMs: 240000 });
+  try {
+    let transcript = '';
+    const langForPass = primaryLang === 'auto' ? 'auto' : primaryLang;
 
-  if (ws.code !== 0) {
-    const errOut = ws.stderr.slice(0, 2000) || ws.stdout.slice(0, 2000);
-    logger.error('[transcribe] whisper failed', {
-      code: ws.code,
-      stderr: errOut.slice(0, 2000),
-      stdout: ws.stdout.slice(0, 500),
+    if (mixed && langForPass !== 'auto' && langForPass !== 'en') {
+      const primaryTranscript = await runLocalWhisper(
+        whisperBin,
+        modelPath,
+        normalizedPath,
+        langForPass,
+        prompt
+      );
+      let autoTranscript = '';
+      try {
+        autoTranscript = await runLocalWhisper(whisperBin, modelPath, normalizedPath, 'auto', prompt);
+      } catch (autoErr) {
+        logger.warn('[transcribe] auto pass failed; using primary language pass only', {
+          error: autoErr instanceof Error ? autoErr.message : String(autoErr),
+        });
+      }
+      transcript = pickBestTranscript(primaryTranscript, autoTranscript, langForPass);
+      logger.info('[transcribe] mixed-language merge', {
+        primaryLang: langForPass,
+        primaryPreview: primaryTranscript.slice(0, 80),
+        autoPreview: autoTranscript.slice(0, 80),
+        chosenPreview: transcript.slice(0, 80),
+      });
+    } else {
+      transcript = await runLocalWhisper(whisperBin, modelPath, normalizedPath, langForPass, prompt);
+    }
+
+    logger.info('[transcribe] whisper output', {
+      transcriptPreview: transcript ? transcript.slice(0, 120) : '',
+      language: langForPass,
+      mixed,
     });
+
+    if (!transcript) {
+      return res.status(422).json({
+        error: 'Empty transcript',
+        details:
+          'Whisper returned no text. Speak clearly, wait for the mic to finish, and ensure the interview language matches your speech.',
+      });
+    }
+
+    return res.json({ transcript });
+  } catch (e) {
+    const errOut = e instanceof Error ? e.message : String(e);
+    logger.error('[transcribe] whisper failed', { error: errOut });
     if (remoteSttConfigured()) {
-      logger.warn('[transcribe] whisper.cpp broken at runtime; falling back to remote STT');
-      const remoteTranscript = await tryRemoteStt(normalizedPath, language === 'auto' ? undefined : language);
+      logger.warn('[transcribe] whisper.cpp failed; falling back to remote STT');
+      const remoteTranscript = await tryRemoteStt(normalizedPath, mixed ? undefined : remoteLang);
       if (remoteTranscript) return res.json({ transcript: remoteTranscript });
     }
     return res.status(500).json({
@@ -454,31 +577,6 @@ async function transcribeNormalizedAudio(
       details: errOut,
     });
   }
-
-  let transcript = extractTranscriptFromWhisperStdout(ws.stdout);
-  if (!transcript && outputTxtPath && fs.existsSync(outputTxtPath)) {
-    try {
-      transcript = fs.readFileSync(outputTxtPath, 'utf8').replace(/\s+/g, ' ').trim();
-    } catch {
-      // ignore
-    }
-  }
-
-  logger.info('[transcribe] whisper output', {
-    transcriptPreview: transcript ? transcript.slice(0, 120) : '',
-    stdoutBytes: ws.stdout.length,
-    stderrBytes: ws.stderr.length,
-  });
-
-  if (!transcript) {
-    return res.status(422).json({
-      error: 'Empty transcript',
-      details:
-        'Whisper returned no text. Check that audio contains speech and that ffmpeg normalization succeeded.',
-    });
-  }
-
-  return res.json({ transcript });
 }
 
 router.post('/', upload.single('audio'), async (req: Request, res: Response) => {
@@ -510,8 +608,10 @@ router.post('/', upload.single('audio'), async (req: Request, res: Response) => 
     normalizedPath = await normalizeUploadedAudio(inputPath);
 
     outputTxtPath = `${normalizedPath}.txt`;
-    const language = resolveTranscribeLanguage((req.body as { language?: string }).language);
-    return await transcribeNormalizedAudio(normalizedPath, res, language);
+    const body = (req.body || {}) as { language?: string; mixed?: string };
+    const ctx = resolveTranscribeRequest(body);
+    logger.info('[transcribe] language context', ctx);
+    return await transcribeNormalizedAudio(normalizedPath, res, ctx);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     logger.error('[transcribe] route failed', { error: message });

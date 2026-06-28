@@ -31,6 +31,20 @@ export function whisperLanguageCode(code: InterviewLanguageCode): string {
   return code;
 }
 
+/** Bias Whisper toward interview speech in the target language. */
+export function whisperSttPrompt(code: InterviewLanguageCode): string {
+  const prompts: Record<InterviewLanguageCode, string> = {
+    'en-US': 'This is a job interview. The candidate is answering questions.',
+    es: 'Esta es una entrevista de trabajo.',
+    fr: 'Ceci est un entretien d embauche.',
+    de: 'Dies ist ein Vorstellungsgespräch.',
+    hi: 'यह एक नौकरी का साक्षात्कार है।',
+    ar: 'هذا مقابلة عمل. المرشح يجيب على الأسئلة.',
+    ur: 'یہ نوکری کا انٹرویو ہے۔ امیدوار سوالات کے جواب دے رہا ہے۔',
+  };
+  return prompts[code];
+}
+
 export function interviewLanguageLabel(code: InterviewLanguageCode): string {
   const labels: Record<InterviewLanguageCode, string> = {
     'en-US': 'English',

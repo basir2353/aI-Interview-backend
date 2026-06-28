@@ -10,6 +10,7 @@ import { interviewSessionService } from '../../services/interview/InterviewSessi
 import { validate } from '../middleware/validate';
 import { buildResumeContext } from '../../services/interview/ResumeContextService';
 import { parseCodingModeFromFocusAreas } from '../../constants/codingInterviewModes';
+import { resolveScheduleBranding } from '../../services/interview/ScheduleBrandingService';
 import type { DifficultyLevel, ScheduledCustomQuestion } from '../../types';
 
 const router = Router();
@@ -67,7 +68,7 @@ router.post(
   async (req: Request, res: Response) => {
     const token = req.params.token;
     const { rows } = await query(
-      `SELECT id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, position_id, application_id, resume_url, status, interview_id
+      `SELECT id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, position_id, application_id, resume_url, status, interview_id, created_by, interviewer_persona, company_name
        FROM scheduled_interviews WHERE join_token = $1`,
       [token]
     );
@@ -88,6 +89,9 @@ router.post(
       resume_url: string | null;
       status: string;
       interview_id: string | null;
+      created_by: string | null;
+      interviewer_persona: string | null;
+      company_name: string | null;
     };
     let customQuestions: ScheduledCustomQuestion[] = [];
     if (Array.isArray(row.custom_questions)) {
@@ -104,7 +108,7 @@ router.post(
       return res.status(410).json({ error: 'This interview was cancelled' });
     }
     if (row.interview_id && row.status === 'in_progress') {
-      const state = await interviewSessionService.getState(row.interview_id);
+      const state = await interviewSessionService.getStateWithBranding(row.interview_id);
       if (state) {
         return res.json({
           interviewId: row.interview_id,
@@ -186,6 +190,13 @@ router.post(
       customQuestions = [...customQuestions, ...defaultCoding].slice(0, 30);
     }
 
+    const branding = await resolveScheduleBranding({
+      scheduleInterviewerPersona: row.interviewer_persona,
+      scheduleCompanyName: row.company_name,
+      createdBy: row.created_by,
+      positionId: row.position_id,
+    });
+
     const { interviewId, state } = await interviewSessionService.start({
       candidateId,
       role: row.role as 'technical' | 'behavioral' | 'sales' | 'customer_success',
@@ -199,6 +210,8 @@ router.post(
       customQuestions,
       focusAreas: row.focus_areas?.trim() || undefined,
       durationMinutes: row.duration_minutes ?? undefined,
+      interviewerPersona: branding.interviewerPersona,
+      companyName: branding.companyName,
     });
     await query(
       `UPDATE scheduled_interviews SET interview_id = $2, status = 'in_progress', updated_at = NOW() WHERE id = $1`,

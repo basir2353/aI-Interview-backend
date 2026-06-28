@@ -36,7 +36,8 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV WHISPER_CPP_PATH=/usr/local/bin/whisper-cli
-ENV WHISPER_MODEL_PATH=/app/models/ggml-base.en.bin
+ENV WHISPER_MODEL_PATH=/app/models/ggml-base.bin
+ENV WHISPER_LANGUAGE=auto
 
 COPY --from=whisper-builder /whisper/build/bin/whisper-cli /usr/local/bin/whisper-cli
 # Copy any shared libs if static build still emits them (libwhisper.so.1, libggml, etc.)
@@ -54,8 +55,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
 
 RUN mkdir -p /app/models /app/uploads \
-    && curl -fsSL -o /app/models/ggml-base.en.bin \
-      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+    && curl -fsSL -o /app/models/ggml-base.bin \
+      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
 
 EXPOSE 8080
 

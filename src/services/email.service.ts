@@ -5,11 +5,17 @@ import {
   interviewScheduleText,
   passwordResetHtml,
   passwordResetText,
+  applicationReceivedHtml,
+  applicationReceivedText,
+  candidateWelcomeHtml,
+  candidateWelcomeText,
 } from './emailTemplates';
 import {
   isResendConfigured,
   sendInterviewScheduleViaResend,
   sendPasswordResetViaResend,
+  sendApplicationReceivedViaResend,
+  sendCandidateWelcomeViaResend,
   verifyResendConnection,
 } from './resendMail.service';
 
@@ -240,6 +246,48 @@ export async function sendPasswordResetEmail(input: {
   } catch (e) {
     const err = e instanceof Error ? e.message : 'Unknown mail error';
     console.error('[Mail] Failed to send password reset email:', err);
+    return { sent: false, error: err };
+  }
+}
+
+export async function sendApplicationReceivedEmail(input: {
+  to: string;
+  candidateName?: string | null;
+  jobTitle: string;
+  companyName?: string | null;
+}): Promise<{ sent: boolean; error?: string }> {
+  try {
+    if (config.mail.provider === 'resend' || isResendConfigured()) {
+      return sendApplicationReceivedViaResend(input);
+    }
+    const dashboardUrl = `${config.frontendUrl.replace(/\/$/, '')}/candidate/applications`;
+    const subject = `Application received — ${input.jobTitle}`;
+    const html = applicationReceivedHtml({ ...input, dashboardUrl });
+    const text = applicationReceivedText({ ...input, dashboardUrl });
+    return sendViaSmtp({ to: input.to, subject, html, text });
+  } catch (e) {
+    const err = e instanceof Error ? e.message : 'Unknown mail error';
+    console.error('[Mail] Failed to send application received email:', err);
+    return { sent: false, error: err };
+  }
+}
+
+export async function sendCandidateWelcomeEmail(input: {
+  to: string;
+  candidateName?: string | null;
+}): Promise<{ sent: boolean; error?: string }> {
+  try {
+    if (config.mail.provider === 'resend' || isResendConfigured()) {
+      return sendCandidateWelcomeViaResend(input);
+    }
+    const dashboardUrl = `${config.frontendUrl.replace(/\/$/, '')}/candidate/dashboard`;
+    const subject = `Welcome to Intervion`;
+    const html = candidateWelcomeHtml({ candidateName: input.candidateName, dashboardUrl });
+    const text = candidateWelcomeText({ candidateName: input.candidateName, dashboardUrl });
+    return sendViaSmtp({ to: input.to, subject, html, text });
+  } catch (e) {
+    const err = e instanceof Error ? e.message : 'Unknown mail error';
+    console.error('[Mail] Failed to send welcome email:', err);
     return { sent: false, error: err };
   }
 }

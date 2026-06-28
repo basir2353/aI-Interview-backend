@@ -119,7 +119,7 @@ router.post(
 /** GET /interview/:id/state - Get current interview state (Redis) */
 router.get('/:id/state', validate([param('id').isUUID()]), async (req: Request, res: Response) => {
   try {
-    const state = await interviewSessionService.getState(req.params.id);
+    const state = await interviewSessionService.getStateWithBranding(req.params.id);
     if (!state) {
       return res.status(404).json({ error: 'Interview not found or session expired' });
     }

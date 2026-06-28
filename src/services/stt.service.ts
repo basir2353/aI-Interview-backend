@@ -25,8 +25,8 @@ export class STTService extends EventEmitter {
 
     constructor() {
         super();
-        this.model = process.env.WHISPER_MODEL || 'base.en';
-        this.language = process.env.WHISPER_LANGUAGE || 'en';
+        this.model = process.env.WHISPER_MODEL || 'base';
+        this.language = process.env.WHISPER_LANGUAGE || 'auto';
         this.device = process.env.WHISPER_DEVICE || 'cpu';
         this.tempAudioFile = path.join('/tmp', `whisper_${Date.now()}.wav`);
     }

@@ -79,7 +79,9 @@ Railway sets `PORT` and `DATABASE_URL` automatically — do not override `PORT`.
 | Variable | Description |
 |----------|-------------|
 | `REDIS_URL` | Add Railway Redis plugin for session persistence (defaults to in-memory) |
-| `STT_PROVIDER` | `local` (whisper.cpp in Docker), `speaches` (Railway Speaches), or `openai` |
+| `STT_PROVIDER` | `local` (whisper.cpp in Docker, multilingual), `speaches` (Railway Speaches), or `openai` |
+| `WHISPER_MODEL_PATH` | Default `/app/models/ggml-base.bin` (multilingual; set in Dockerfile) |
+| `WHISPER_LANGUAGE` | `auto` (detect) or fixed: `en`, `ur`, `ar`, `fr`, `de`, `hi`, `es` |
 | `SPEACHES_BASE_URL` | Speaches Railway URL, e.g. `https://speaches-xxx.up.railway.app` |
 | `SPEACHES_API_KEY` | Same as `API_KEY` you set on the Speaches service |
 | `SPEACHES_MODEL` | Default `Systran/faster-distil-whisper-small.en` |
@@ -211,7 +213,7 @@ Redeploy the frontend so `/api/transcribe` proxies to Railway.
 |---------|-------|------------------|
 | PostgreSQL | Local Postgres | Railway Postgres plugin |
 | LLM | Ollama or OpenRouter | Ollama template or OpenRouter |
-| STT | brew install whisper-cpp | Built into Docker image, or Speaches on Railway |
+| STT | brew install whisper-cpp + `ggml-base.bin` | Built into Docker image (multilingual), or Speaches on Railway |
 
 ## Speaches STT (recommended for production)
 

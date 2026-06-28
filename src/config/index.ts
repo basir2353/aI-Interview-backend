@@ -178,4 +178,14 @@ export const config = {
       'no-reply@aiinterviewer.local',
     replyTo: process.env.MAIL_REPLY_TO || '',
   },
+
+  /** Contact form notifications + Resend inbound webhook. */
+  contact: {
+    notifyEmail:
+      process.env.CONTACT_NOTIFY_EMAIL ||
+      process.env.MAIL_REPLY_TO ||
+      process.env.ADMIN_EMAIL ||
+      '',
+    resendWebhookSecret: process.env.RESEND_WEBHOOK_SECRET || '',
+  },
 } as const;

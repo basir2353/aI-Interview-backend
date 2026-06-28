@@ -389,6 +389,9 @@ async function transcribeNormalizedAudio(normalizedPath: string, res: Response):
   const modelPath =
     process.env.WHISPER_MODEL_PATH ||
     pickFirstExisting([
+      path.join(process.cwd(), 'models', 'ggml-base.bin'),
+      path.join(process.cwd(), 'models', 'ggml-small.bin'),
+      path.join(process.cwd(), 'whisper.cpp', 'models', 'ggml-base.bin'),
       path.join(process.cwd(), 'models', 'ggml-base.en.bin'),
       path.join(process.cwd(), 'whisper.cpp', 'models', 'ggml-base.en.bin'),
     ]);
@@ -397,7 +400,7 @@ async function transcribeNormalizedAudio(normalizedPath: string, res: Response):
     return res.status(500).json({
       error: 'Whisper model not found',
       details:
-        'Expected models/ggml-base.en.bin (or set WHISPER_MODEL_PATH). From the backend folder run: ./whisper.cpp/models/download-ggml-model.sh base.en ./models',
+        'Expected models/ggml-base.bin (multilingual) or set WHISPER_MODEL_PATH. Download: curl -L -o models/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin',
     });
   }
 
@@ -408,7 +411,7 @@ async function transcribeNormalizedAudio(normalizedPath: string, res: Response):
     '-f',
     normalizedPath,
     '-l',
-    process.env.WHISPER_LANGUAGE || 'en',
+    process.env.WHISPER_LANGUAGE || 'auto',
     '--no-timestamps',
     '-otxt',
   ];

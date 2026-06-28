@@ -3,6 +3,8 @@
  * Design: blue-violet gradient header, detail table, preparation checklist.
  */
 
+import { config } from '../config/index.js';
+
 const BRAND = {
   name: 'Intervion',
   product: 'Intervion AI Interviews',
@@ -23,6 +25,11 @@ const BRAND = {
   fontFamily: "Arial, Helvetica, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   year: new Date().getFullYear(),
 };
+
+function brandLogoUrl(variant: 'light' | 'dark' = 'light'): string {
+  const base = config.frontendUrl.replace(/\/$/, '');
+  return `${base}/${variant === 'light' ? 'white_logo.png' : 'dark_logo.png'}`;
+}
 
 const DEFAULT_DURATION_MINUTES = 30;
 
@@ -71,6 +78,7 @@ function emailShell(title: string, bodyHtml: string, footerCompany?: string): st
           ${bodyHtml}
           <tr>
             <td style="padding:28px 32px;text-align:center;background:${BRAND.footerBg};font-size:13px;color:${BRAND.textMuted};line-height:1.6;">
+              <img src="${brandLogoUrl('dark')}" alt="${escapeHtml(BRAND.name)}" width="120" style="display:block;margin:0 auto 16px;max-width:120px;height:auto;border:0;" />
               &copy; ${BRAND.year} ${escapeHtml(company)}. All rights reserved.<br /><br />
               Powered by <strong style="color:${BRAND.textDark};">${BRAND.product}</strong><br />
               <span style="font-size:12px;color:${BRAND.textMuted};">${BRAND.tagline}</span>
@@ -87,11 +95,11 @@ function emailShell(title: string, bodyHtml: string, footerCompany?: string): st
 </html>`;
 }
 
-function gradientHeader(title: string, subtitle: string, logoText = 'IV'): string {
+function gradientHeader(title: string, subtitle: string): string {
   return `
   <tr>
     <td style="padding:40px 32px;text-align:center;background:linear-gradient(135deg,${BRAND.gradientStart},${BRAND.gradientEnd});color:#ffffff;">
-      <div style="width:70px;height:70px;margin:0 auto 16px;background:#ffffff;color:${BRAND.gradientStart};border-radius:50%;line-height:70px;font-size:26px;font-weight:bold;text-align:center;">${escapeHtml(logoText)}</div>
+      <img src="${brandLogoUrl('light')}" alt="${escapeHtml(BRAND.name)}" width="160" style="display:block;margin:0 auto 20px;max-width:160px;height:auto;border:0;" />
       <h1 style="margin:0;font-size:28px;font-weight:700;color:#ffffff;letter-spacing:-0.02em;">${escapeHtml(title)}</h1>
       <p style="margin:10px 0 0;font-size:15px;color:rgba(255,255,255,0.92);">${escapeHtml(subtitle)}</p>
     </td>
@@ -211,7 +219,7 @@ export function interviewScheduleHtml(params: {
 
 export function passwordResetHtml(code: string, resetLink?: string): string {
   const body = `
-  ${gradientHeader('Password Reset', 'Secure access to your Intervion account', '🔐')}
+  ${gradientHeader('Password Reset', 'Secure access to your Intervion account')}
   <tr>
     <td style="padding:36px 40px;color:${BRAND.text};line-height:1.7;font-size:15px;">
       <h2 style="margin:0 0 16px;font-size:22px;color:${BRAND.textDark};font-weight:700;">Reset your password</h2>
@@ -296,4 +304,186 @@ export function interviewScheduleText(params: {
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+export function contactAdminNotificationHtml(params: {
+  name: string;
+  email: string;
+  company?: string | null;
+  subject?: string | null;
+  message: string;
+  source: string;
+  adminUrl: string;
+}): string {
+  const body = `
+  ${gradientHeader('New contact message', params.source === 'resend_inbound' ? 'Inbound email via Resend' : 'Website contact form')}
+  <tr>
+    <td style="padding:36px 40px;color:${BRAND.text};line-height:1.7;font-size:15px;">
+      <h2 style="margin:0 0 16px;font-size:22px;color:${BRAND.textDark};font-weight:700;">Someone reached out</h2>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 0;">
+        ${detailRow('Name', params.name || '—')}
+        ${detailRow('Email', params.email)}
+        ${params.company ? detailRow('Company', params.company) : ''}
+        ${detailRow('Subject', params.subject || '—')}
+        ${detailRow('Source', params.source === 'resend_inbound' ? 'Resend inbound' : 'Contact form')}
+      </table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0 0;background:${BRAND.accentSoft};border-left:4px solid ${BRAND.accent};border-radius:8px;">
+        <tr>
+          <td style="padding:18px 20px;font-size:14px;color:${BRAND.text};line-height:1.65;white-space:pre-wrap;">${escapeHtml(params.message)}</td>
+        </tr>
+      </table>
+      ${primaryButton(params.adminUrl, 'View in admin panel')}
+    </td>
+  </tr>`;
+  return emailShell('New contact message', body);
+}
+
+export function contactAdminNotificationText(params: {
+  name: string;
+  email: string;
+  company?: string | null;
+  subject?: string | null;
+  message: string;
+  source: string;
+  adminUrl: string;
+}): string {
+  return [
+    `${BRAND.name} — New contact message`,
+    '',
+    `Name: ${params.name || '—'}`,
+    `Email: ${params.email}`,
+    params.company ? `Company: ${params.company}` : '',
+    `Subject: ${params.subject || '—'}`,
+    `Source: ${params.source}`,
+    '',
+    params.message,
+    '',
+    `Admin panel: ${params.adminUrl}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function contactAutoReplyHtml(name: string): string {
+  const greeting = name.trim() ? `Hi ${escapeHtml(name.trim())},` : 'Hello,';
+  const body = `
+  ${gradientHeader('Thanks for contacting us', 'We received your message')}
+  <tr>
+    <td style="padding:36px 40px;color:${BRAND.text};line-height:1.7;font-size:15px;">
+      <h2 style="margin:0 0 16px;font-size:22px;color:${BRAND.textDark};font-weight:700;">${greeting}</h2>
+      <p style="margin:0 0 18px;">
+        Thank you for reaching out to ${BRAND.name}. Our team has received your message and will get back to you shortly.
+      </p>
+      <p style="margin:0;font-size:15px;color:${BRAND.textDark};">
+        Best regards,<br />
+        <strong>The ${BRAND.name} team</strong>
+      </p>
+    </td>
+  </tr>`;
+  return emailShell('Message received', body);
+}
+
+export function contactAutoReplyText(name: string): string {
+  const greeting = name.trim() ? `Hi ${name.trim()},` : 'Hello,';
+  return [
+    `${BRAND.name} — Message received`,
+    '',
+    greeting,
+    '',
+    `Thank you for contacting ${BRAND.name}. We received your message and will reply soon.`,
+    '',
+    `— The ${BRAND.name} team`,
+  ].join('\n');
+}
+
+export function applicationReceivedHtml(params: {
+  candidateName?: string | null;
+  jobTitle: string;
+  companyName?: string | null;
+  dashboardUrl: string;
+}): string {
+  const name = params.candidateName?.trim() || 'there';
+  const company = params.companyName?.trim() || BRAND.name;
+  const body = `
+  ${gradientHeader('Application received', 'We got your application')}
+  <tr>
+    <td style="padding:36px 40px;color:${BRAND.text};line-height:1.7;font-size:15px;">
+      <h2 style="margin:0 0 16px;font-size:22px;color:${BRAND.textDark};font-weight:700;">Hi ${escapeHtml(name)}, 👋</h2>
+      <p style="margin:0 0 18px;">
+        Thank you for applying. We have received your application and the hiring team will review it soon.
+      </p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 0;">
+        ${detailRow('Role', params.jobTitle)}
+        ${detailRow('Company', company)}
+      </table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 0;background:${BRAND.accentSoft};border-left:4px solid ${BRAND.accent};border-radius:8px;">
+        <tr>
+          <td style="padding:18px 20px;font-size:14px;color:${BRAND.text};">
+            <strong style="color:${BRAND.textDark};">What happens next?</strong><br /><br />
+            Track your application status and interview details anytime in your candidate dashboard.
+            If an interview is scheduled, you will receive another email with the date, time, and join link.
+          </td>
+        </tr>
+      </table>
+      ${primaryButton(params.dashboardUrl, 'View my applications')}
+    </td>
+  </tr>`;
+  return emailShell('Application received', body, company);
+}
+
+export function applicationReceivedText(params: {
+  candidateName?: string | null;
+  jobTitle: string;
+  companyName?: string | null;
+  dashboardUrl: string;
+}): string {
+  const name = params.candidateName?.trim() || 'there';
+  const company = params.companyName?.trim() || BRAND.name;
+  return [
+    `${BRAND.name} — Application received`,
+    '',
+    `Hi ${name},`,
+    '',
+    `Your application for ${params.jobTitle} at ${company} was received.`,
+    '',
+    `Track status: ${params.dashboardUrl}`,
+  ].join('\n');
+}
+
+export function candidateWelcomeHtml(params: {
+  candidateName?: string | null;
+  dashboardUrl: string;
+}): string {
+  const name = params.candidateName?.trim() || 'there';
+  const body = `
+  ${gradientHeader('Welcome to Intervion', 'Your candidate account is ready')}
+  <tr>
+    <td style="padding:36px 40px;color:${BRAND.text};line-height:1.7;font-size:15px;">
+      <h2 style="margin:0 0 16px;font-size:22px;color:${BRAND.textDark};font-weight:700;">Hi ${escapeHtml(name)}, 👋</h2>
+      <p style="margin:0 0 18px;">
+        Your account is set up. You can apply for jobs, track applications, and join AI interviews from your dashboard.
+      </p>
+      ${primaryButton(params.dashboardUrl, 'Go to my dashboard')}
+      <p style="margin:24px 0 0;font-size:14px;color:${BRAND.textMuted};">
+        When you apply or get scheduled for an interview, we will email you updates with dates and join links.
+      </p>
+    </td>
+  </tr>`;
+  return emailShell('Welcome', body);
+}
+
+export function candidateWelcomeText(params: {
+  candidateName?: string | null;
+  dashboardUrl: string;
+}): string {
+  const name = params.candidateName?.trim() || 'there';
+  return [
+    `${BRAND.name} — Welcome`,
+    '',
+    `Hi ${name},`,
+    '',
+    'Your candidate account is ready.',
+    '',
+    `Dashboard: ${params.dashboardUrl}`,
+  ].join('\n');
 }

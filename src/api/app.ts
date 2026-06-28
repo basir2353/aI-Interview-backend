@@ -20,6 +20,7 @@ import { transcribeRoutes } from './routes/transcribe.routes';
 import { publicJobsRoutes } from './routes/publicJobs';
 import { candidateAuthRoutes } from './routes/candidateAuth';
 import { communityRoutes } from './routes/community';
+import { publicContactRoutes } from './routes/publicContact';
 import heygenRoutes from './routes/heygen';
 import { avatarRoutes } from './routes/avatar';
 
@@ -98,6 +99,7 @@ app.use(`${config.apiPrefix}/admin`, adminRoutes);
 app.use(`${config.apiPrefix}/recruiter`, recruiterRoutes);
 app.use(`${config.apiPrefix}/public/join`, publicJoinRoutes);
 app.use(`${config.apiPrefix}/public/jobs`, publicJobsRoutes);
+app.use(`${config.apiPrefix}/public`, publicContactRoutes);
 app.use(`${config.apiPrefix}/candidate`, candidateAuthRoutes);
 app.use(`${config.apiPrefix}/community`, communityRoutes);
 app.use(`${config.apiPrefix}/ai`, aiRoutes);

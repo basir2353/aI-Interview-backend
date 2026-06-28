@@ -7,7 +7,7 @@ import { query, formatDbError } from '../../db/client';
 import { validate } from '../middleware/validate';
 import { candidateAuthMiddleware } from '../middleware/auth';
 import { config } from '../../config';
-import { sendPasswordResetEmail } from '../../services/email.service';
+import { sendPasswordResetEmail, sendCandidateWelcomeEmail } from '../../services/email.service';
 
 const router = Router();
 
@@ -67,6 +67,16 @@ router.post(
         config.jwt.secret,
         { expiresIn: config.jwt.expiresIn as SignOptions['expiresIn'] }
       );
+
+      void sendCandidateWelcomeEmail({
+        to: normalizedEmail,
+        candidateName: candidate.name,
+      }).then((result) => {
+        if (!result.sent) {
+          console.warn('[Signup] Welcome email failed:', result.error);
+        }
+      });
+
       return res.status(201).json({
         token,
         candidate: {

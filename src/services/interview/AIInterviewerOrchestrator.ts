@@ -14,6 +14,7 @@ import {
   type CodingInterviewModeId,
 } from '../../constants/codingInterviewModes';
 import { buildInterviewWelcomeParts, buildFirstWarmUpQuestion, formatFirstName } from './InterviewWelcomeService';
+import { interviewerFirstName } from '../../constants/interviewerPersona';
 import { interviewSessionService } from './InterviewSessionService';
 import { conversationManager } from './ConversationManager';
 import { questionStrategyEngine } from './QuestionStrategyEngine';
@@ -73,14 +74,18 @@ export class AIInterviewerOrchestrator {
     }
   }
 
-  /** Intervion AI interviewer names: Ethan for technical, ZaraAlex for other roles. */
-  private interviewerName(role: string): string {
-    return role === 'technical' ? 'Ethan' : 'ZaraAlex';
+  /** Intervion AI interviewer name from schedule/recruiter settings, with role-based fallback. */
+  private interviewerName(state: InterviewState): string {
+    if (state.interviewerPersona) {
+      return interviewerFirstName(state.interviewerPersona);
+    }
+    return state.role === 'technical' ? 'Ethan' : 'ZaraAlex';
   }
 
   private buildWelcomeParts(state: InterviewState): string[] {
     const codingMode = state.codingInterviewMode as CodingInterviewModeId | undefined;
-    const interviewerName = this.interviewerName(state.role);
+    const interviewerName = this.interviewerName(state);
+    const companyName = state.companyName;
     const positionTitle = state.positionTitle ?? state.resumeProfile?.positionTitle;
     const profile = {
       candidateName: state.candidateDisplayName ?? state.resumeProfile?.candidateName,
@@ -100,16 +105,23 @@ export class AIInterviewerOrchestrator {
         codingModeId: codingMode,
         interviewerName,
         roleLabel: this.roleLabel(state.role),
+        companyName,
       });
     }
     const firstName = formatFirstName(profile.candidateName);
     const roleLabel = this.roleLabel(state.role);
+    const company = companyName?.trim();
     const positionBit = positionTitle
       ? `You're here for the ${positionTitle} role — I've had a quick look at what you shared with us.`
-      : `You're here for your ${roleLabel} interview today — I've had a quick look at what you shared with us.`;
+      : company
+        ? `You're here for your ${roleLabel} interview with ${company} — I've had a quick look at what you shared with us.`
+        : `You're here for your ${roleLabel} interview today — I've had a quick look at what you shared with us.`;
     const nameBit = firstName ? `${firstName}, great to meet you.` : `Great to meet you.`;
+    const part1 = company
+      ? `Hi there — thanks for joining today. I'm ${interviewerName}, and I'll be your interviewer today on behalf of ${company}.`
+      : `Hi there — thanks for joining today. I'm ${interviewerName}, and I'll be your interviewer for this session.`;
     return [
-      `Hi there — thanks for joining today. I'm ${interviewerName}, and I'll be your interviewer for this session.`,
+      part1,
       `${nameBit} ${positionBit}`,
       `Think of this as a conversation, not a test. No need to rush — take your time with each answer. Alright, let's get started.`,
     ];
@@ -130,7 +142,7 @@ export class AIInterviewerOrchestrator {
    * question, and return next AI reply. If interview is at end, generate report.
    */
   async submitAnswer(input: SubmitAnswerInput): Promise<SubmitAnswerResult> {
-    const state = await interviewSessionService.getState(input.interviewId);
+    const state = await interviewSessionService.getStateWithBranding(input.interviewId);
     if (!state) {
       return { success: false, state: null, failureReason: 'session_not_found' };
     }
@@ -160,7 +172,7 @@ export class AIInterviewerOrchestrator {
       topicCoverage: lastQuestionId ? { [lastQuestionId]: true } : undefined,
     });
 
-    const updatedState = await interviewSessionService.getState(input.interviewId);
+    const updatedState = await interviewSessionService.getStateWithBranding(input.interviewId);
     if (!updatedState) return { success: true, state: null, evaluation: { score: evaluation.score, maxScore: evaluation.maxScore } };
 
     const requestFollowUp = evaluation.normalizedScore < 0.5 || input.answerText.length < 50;
@@ -209,7 +221,7 @@ export class AIInterviewerOrchestrator {
       currentDifficulty: next.difficulty,
     });
 
-    const finalState = await interviewSessionService.getState(input.interviewId);
+    const finalState = await interviewSessionService.getStateWithBranding(input.interviewId);
     return {
       success: true,
       state: finalState ?? updatedState,
@@ -224,7 +236,7 @@ export class AIInterviewerOrchestrator {
    * Idempotent: safe to call once per session; repairs legacy sessions that only have a question turn.
    */
   async ensureWelcomeDelivered(interviewId: string): Promise<EnsureWelcomeDeliveredResult> {
-    const state = await interviewSessionService.getState(interviewId);
+    const state = await interviewSessionService.getStateWithBranding(interviewId);
     if (!state) {
       return { success: false, state: null, reply: '' };
     }
@@ -286,7 +298,7 @@ export class AIInterviewerOrchestrator {
    * append a candidate turn; use this for "start interview" or when advancing phase.
    */
   async getNextReply(input: GetNextReplyInput): Promise<GetNextReplyResult> {
-    const state = await interviewSessionService.getState(input.interviewId);
+    const state = await interviewSessionService.getStateWithBranding(input.interviewId);
     if (!state) {
       return { success: false, state: null, reply: '' };
     }
@@ -345,13 +357,13 @@ export class AIInterviewerOrchestrator {
         currentDifficulty: next.difficulty,
       });
 
-      const s = await interviewSessionService.getState(input.interviewId);
+      const s = await interviewSessionService.getStateWithBranding(input.interviewId);
       if (s) {
         s.welcomeDelivered = true;
         await interviewSessionService.setState(input.interviewId, s);
       }
 
-      const updatedState = await interviewSessionService.getState(input.interviewId);
+      const updatedState = await interviewSessionService.getStateWithBranding(input.interviewId);
       console.log('[Interview] Welcome delivered', {
         interviewId: input.interviewId,
         introBeats: welcomeParts.length,
@@ -390,7 +402,7 @@ export class AIInterviewerOrchestrator {
       currentDifficulty: next.difficulty,
     });
 
-    const updatedState = await interviewSessionService.getState(input.interviewId);
+    const updatedState = await interviewSessionService.getStateWithBranding(input.interviewId);
     return {
       success: true,
       state: updatedState ?? state,
@@ -465,7 +477,7 @@ Respond only with valid JSON: {"reply": "<your spoken reply: brief acknowledgmen
    * Generate report for a completed interview (e.g. from GET /report/:id).
    */
   async getReport(interviewId: string): Promise<InterviewReport | null> {
-    const state = await interviewSessionService.getState(interviewId);
+    const state = await interviewSessionService.getStateWithBranding(interviewId);
     if (!state) return null;
     return scoringReportService.buildReport({
       ...state,

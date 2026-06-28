@@ -18,6 +18,7 @@ import type {
 } from '../../types';
 import type { ResumeProfile } from './ResumeProfileService';
 import type { CodingInterviewModeId } from '../../constants/codingInterviewModes';
+import { resolveBrandingForInterview } from './ScheduleBrandingService';
 
 export interface StartInterviewInput {
   candidateId: string;
@@ -32,6 +33,8 @@ export interface StartInterviewInput {
   customQuestions?: ScheduledCustomQuestion[];
   focusAreas?: string;
   durationMinutes?: number;
+  interviewerPersona?: 'ethan' | 'zara';
+  companyName?: string;
 }
 
 const DEFAULT_PHASE_ORDER: InterviewPhase[] = ['intro', 'technical', 'behavioral', 'wrap_up', 'coding'];
@@ -79,6 +82,8 @@ export class InterviewSessionService {
       customQuestions: input.customQuestions ?? [],
       focusAreas: input.focusAreas,
       durationMinutes: input.durationMinutes,
+      interviewerPersona: input.interviewerPersona,
+      companyName: input.companyName,
       approximateTokens: 0,
     };
 
@@ -109,6 +114,29 @@ export class InterviewSessionService {
     } catch {
       return null;
     }
+  }
+
+  /** Load session state and backfill recruiter branding from the schedule when missing (older sessions). */
+  async getStateWithBranding(interviewId: string): Promise<InterviewState | null> {
+    const state = await this.getState(interviewId);
+    if (!state) return null;
+    if (state.interviewerPersona && state.companyName !== undefined) {
+      return state;
+    }
+    const branding = await resolveBrandingForInterview(interviewId);
+    if (!branding) return state;
+    const enriched: InterviewState = {
+      ...state,
+      interviewerPersona: state.interviewerPersona ?? branding.interviewerPersona,
+      companyName: state.companyName ?? branding.companyName,
+    };
+    if (
+      enriched.interviewerPersona !== state.interviewerPersona ||
+      enriched.companyName !== state.companyName
+    ) {
+      await this.setState(interviewId, enriched);
+    }
+    return enriched;
   }
 
   /**

@@ -21,23 +21,29 @@ export function buildInterviewWelcomeParts(
     codingModeId?: CodingInterviewModeId;
     interviewerName?: string;
     roleLabel?: string;
+    companyName?: string | null;
   }
 ): string[] {
   const firstName = formatFirstName(profile.candidateName);
   const interviewer = options?.interviewerName ?? 'Ethan';
   const roleLabel = options?.roleLabel ?? 'technical';
+  const company = options?.companyName?.trim();
 
-  const part1 = [
-    `Hi there — thanks for joining today.`,
-    `I'm ${interviewer}, and I'll be your interviewer for this session.`,
-  ].join(' ');
+  const part1 = company
+    ? `Hi there — thanks for joining today. I'm ${interviewer}, and I'll be your interviewer today on behalf of ${company}.`
+    : [
+        `Hi there — thanks for joining today.`,
+        `I'm ${interviewer}, and I'll be your interviewer for this session.`,
+      ].join(' ');
 
   const nameLine = firstName
     ? `${firstName}, great to meet you.`
     : `Great to meet you.`;
   const roleLine = profile.positionTitle
     ? `You're here for the ${profile.positionTitle} role — I've had a quick look at your background ahead of time.`
-    : `You're here for your ${roleLabel} interview today — I've had a quick look at what you shared with us.`;
+    : company
+      ? `You're here for your ${roleLabel} interview with ${company} — I've had a quick look at what you shared with us.`
+      : `You're here for your ${roleLabel} interview today — I've had a quick look at what you shared with us.`;
   const part2 = [nameLine, roleLine].join(' ');
 
   const sessionLine = options?.codingModeId
@@ -59,6 +65,7 @@ export function buildInterviewWelcome(
     codingModeId?: CodingInterviewModeId;
     interviewerName?: string;
     roleLabel?: string;
+    companyName?: string | null;
   }
 ): string {
   return buildInterviewWelcomeParts(profile, options).join(' ');

@@ -340,6 +340,8 @@ export async function bootstrapDatabase(): Promise<void> {
       await query(`ALTER TABLE scheduled_interviews ADD COLUMN IF NOT EXISTS focus_areas TEXT;`);
       await query(`ALTER TABLE scheduled_interviews ADD COLUMN IF NOT EXISTS duration_minutes INT;`);
       await query(`ALTER TABLE scheduled_interviews ADD COLUMN IF NOT EXISTS resume_url VARCHAR(512);`);
+      await query(`ALTER TABLE scheduled_interviews ADD COLUMN IF NOT EXISTS interviewer_persona VARCHAR(20) DEFAULT 'ethan';`);
+      await query(`ALTER TABLE scheduled_interviews ADD COLUMN IF NOT EXISTS company_name VARCHAR(255);`);
       await query(`CREATE INDEX IF NOT EXISTS idx_scheduled_interviews_application_id ON scheduled_interviews(application_id);`);
     });
   });
@@ -402,6 +404,33 @@ export async function bootstrapDatabase(): Promise<void> {
     await query(`ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS link_title VARCHAR(500);`);
     await query(`ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS link_image VARCHAR(2048);`);
     await query(`CREATE INDEX IF NOT EXISTS idx_community_posts_post_type ON community_posts(post_type);`);
+  });
+
+  await runStep('contact_submissions', async () => {
+    await query(`
+      CREATE TABLE IF NOT EXISTS contact_submissions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        source VARCHAR(32) NOT NULL DEFAULT 'form' CHECK (source IN ('form', 'resend_inbound')),
+        status VARCHAR(32) NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'read', 'replied', 'archived')),
+        name VARCHAR(255),
+        email VARCHAR(255) NOT NULL,
+        company VARCHAR(255),
+        subject VARCHAR(500),
+        message TEXT NOT NULL,
+        resend_email_id VARCHAR(255),
+        resend_outbound_id VARCHAR(255),
+        attachments JSONB DEFAULT '[]'::jsonb,
+        metadata JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_contact_submissions_resend_email_id
+      ON contact_submissions(resend_email_id) WHERE resend_email_id IS NOT NULL;
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_contact_submissions_status ON contact_submissions(status);`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_contact_submissions_created_at ON contact_submissions(created_at DESC);`);
   });
 
   // 11. Seed data (idempotent)

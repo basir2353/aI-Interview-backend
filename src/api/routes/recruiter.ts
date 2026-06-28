@@ -38,6 +38,25 @@ function mapRecruiterIdentity(row: {
   };
 }
 
+function mapScheduleRow(row: {
+  id: string;
+  candidate_email: string;
+  candidate_name: string | null;
+  role: string;
+  scheduled_at: string;
+  status: string;
+  join_token: string;
+  interview_id: string | null;
+  created_at: string;
+  interviewer_persona?: string | null;
+}) {
+  return {
+    ...row,
+    interviewerPersona: normalizeInterviewerPersona(row.interviewer_persona),
+    joinUrl: `${config.frontendUrl}/interview/join/${row.join_token}`,
+  };
+}
+
 function isDifficultyLevel(value: unknown): value is DifficultyLevel {
   return typeof value === 'string' && (DIFFICULTY_LEVELS as readonly string[]).includes(value);
 }
@@ -343,6 +362,7 @@ router.post(
     body('codingQuestions').optional().isArray(),
     body('focusAreas').optional().isString(),
     body('durationMinutes').optional().isInt({ min: 5, max: 240 }),
+    body('interviewerPersona').optional().isIn(INTERVIEWER_PERSONAS),
   ]),
   async (req: Request, res: Response) => {
     const user = (req as Request & { user: { userId?: string } }).user;
@@ -356,7 +376,7 @@ router.post(
     }
     try {
       const { id } = req.params;
-      const { scheduledAt, role, message, difficulty, customQuestions, codingQuestions, focusAreas, durationMinutes } = req.body as {
+      const { scheduledAt, role, message, difficulty, customQuestions, codingQuestions, focusAreas, durationMinutes, interviewerPersona } = req.body as {
         scheduledAt: string;
         role?: (typeof ROLES)[number];
         message?: string;
@@ -365,13 +385,15 @@ router.post(
         codingQuestions?: unknown[];
         focusAreas?: string;
         durationMinutes?: number;
+        interviewerPersona?: InterviewerPersona;
       };
-      const { rows: recruiterRows } = await query<{ name: string | null; company_name: string | null }>(
-        `SELECT name, company_name FROM users WHERE id = $1 LIMIT 1`,
+      const { rows: recruiterRows } = await query<{ name: string | null; company_name: string | null; interviewer_persona: string | null }>(
+        `SELECT name, company_name, interviewer_persona FROM users WHERE id = $1 LIMIT 1`,
         [userId]
       );
       const recruiterName = recruiterRows[0]?.name ?? null;
       const recruiterCompany = recruiterRows[0]?.company_name ?? null;
+      const schedulePersona = normalizeInterviewerPersona(interviewerPersona ?? recruiterRows[0]?.interviewer_persona);
       const { rows } = await query<{
         application_id: string;
         candidate_email: string | null;
@@ -408,6 +430,7 @@ router.post(
         codingQuestionsRaw: codingQuestions,
       });
       const joinToken = crypto.randomBytes(32).toString('hex');
+      const scheduleCompany = row.position_company || recruiterCompany;
       const { rows: scheduleRows } = await query<{
         id: string;
         candidate_email: string;
@@ -417,8 +440,8 @@ router.post(
         status: string;
         join_token: string;
       }>(
-        `INSERT INTO scheduled_interviews (id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, scheduled_at, join_token, position_id, created_by, application_id, created_at, updated_at)
-         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6, $7, $8::timestamptz, $9, $10, $11, $12, NOW(), NOW())
+        `INSERT INTO scheduled_interviews (id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, scheduled_at, join_token, position_id, created_by, application_id, interviewer_persona, company_name, created_at, updated_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6, $7, $8::timestamptz, $9, $10, $11, $12, $13, $14, NOW(), NOW())
          RETURNING id, candidate_email, candidate_name, role, scheduled_at, status, join_token`,
         [
           row.candidate_email,
@@ -433,6 +456,8 @@ router.post(
           row.position_id,
           userId,
           row.application_id,
+          schedulePersona,
+          scheduleCompany,
         ]
       );
       await query(`UPDATE applications SET status = 'interview_scheduled', updated_at = NOW() WHERE id = $1`, [
@@ -720,18 +745,15 @@ router.get('/schedules', recruiterAuthMiddleware, async (req: Request, res: Resp
     join_token: string;
     interview_id: string | null;
     created_at: string;
+    interviewer_persona: string | null;
   }>(
-    `SELECT id, candidate_email, candidate_name, role, scheduled_at, status, join_token, interview_id, created_at
+    `SELECT id, candidate_email, candidate_name, role, scheduled_at, status, join_token, interview_id, created_at, interviewer_persona
      FROM scheduled_interviews
      WHERE created_by = $1
      ORDER BY scheduled_at DESC`,
     [userId]
   );
-  const schedules = rows.map((r) => ({
-    ...r,
-    joinUrl: `${config.frontendUrl}/interview/join/${r.join_token}`,
-  }));
-  return res.json({ schedules });
+  return res.json({ schedules: rows.map(mapScheduleRow) });
 });
 
 router.post(
@@ -750,6 +772,7 @@ router.post(
     body('focusAreas').optional().isString(),
     body('durationMinutes').optional().isInt({ min: 5, max: 240 }),
     body('resumeUrl').optional().isString(),
+    body('interviewerPersona').optional().isIn(INTERVIEWER_PERSONAS),
   ]),
   async (req: Request, res: Response) => {
     const user = (req as Request & { user: { userId?: string } }).user;
@@ -766,7 +789,7 @@ router.post(
       return res.status(403).json({ error: 'Limited access: you can only schedule from Applications, not create direct links.' });
     }
     try {
-      const { candidateEmail, candidateName, role, scheduledAt, positionId, message, difficulty, customQuestions, codingQuestions, focusAreas, durationMinutes, resumeUrl } = req.body as {
+      const { candidateEmail, candidateName, role, scheduledAt, positionId, message, difficulty, customQuestions, codingQuestions, focusAreas, durationMinutes, resumeUrl, interviewerPersona } = req.body as {
         candidateEmail: string;
         candidateName?: string;
         role: (typeof ROLES)[number];
@@ -779,6 +802,7 @@ router.post(
         focusAreas?: string;
         durationMinutes?: number;
         resumeUrl?: string;
+        interviewerPersona?: InterviewerPersona;
       };
       const normalizedQuestions = normalizeScheduleQuestions({
         role,
@@ -786,12 +810,13 @@ router.post(
         customQuestionsRaw: customQuestions,
         codingQuestionsRaw: codingQuestions,
       });
-      const { rows: recruiterRows } = await query<{ name: string | null; company_name: string | null }>(
-        `SELECT name, company_name FROM users WHERE id = $1 LIMIT 1`,
+      const { rows: recruiterRows } = await query<{ name: string | null; company_name: string | null; interviewer_persona: string | null }>(
+        `SELECT name, company_name, interviewer_persona FROM users WHERE id = $1 LIMIT 1`,
         [userId]
       );
       const recruiterName = recruiterRows[0]?.name ?? null;
       const recruiterCompany = recruiterRows[0]?.company_name ?? null;
+      const schedulePersona = normalizeInterviewerPersona(interviewerPersona ?? recruiterRows[0]?.interviewer_persona);
       let jobTitle: string | undefined;
       let positionCompany: string | null = null;
       if (positionId) {
@@ -802,6 +827,7 @@ router.post(
         jobTitle = posRows[0]?.title ?? undefined;
         positionCompany = posRows[0]?.company_name ?? null;
       }
+      const scheduleCompany = positionCompany || recruiterCompany;
       const joinToken = crypto.randomBytes(32).toString('hex');
       const { rows } = await query<{
         id: string;
@@ -812,8 +838,8 @@ router.post(
         status: string;
         join_token: string;
       }>(
-        `INSERT INTO scheduled_interviews (id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, scheduled_at, join_token, position_id, created_by, resume_url, created_at, updated_at)
-         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6, $7, $8::timestamptz, $9, $10, $11, $12, NOW(), NOW())
+        `INSERT INTO scheduled_interviews (id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, scheduled_at, join_token, position_id, created_by, resume_url, interviewer_persona, company_name, created_at, updated_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6, $7, $8::timestamptz, $9, $10, $11, $12, $13, $14, NOW(), NOW())
          RETURNING id, candidate_email, candidate_name, role, scheduled_at, status, join_token`,
         [
           candidateEmail,
@@ -828,6 +854,8 @@ router.post(
           positionId || null,
           userId,
           resumeUrl?.trim() || null,
+          schedulePersona,
+          scheduleCompany,
         ]
       );
       if (rows.length === 0) {

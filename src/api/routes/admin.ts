@@ -11,6 +11,16 @@ import { query } from '../../db/client';
 import { validate } from '../middleware/validate';
 import { adminAuthMiddleware } from '../middleware/auth';
 import * as questionTemplateService from '../../services/questionTemplate.service';
+import {
+  listContactSubmissions,
+  getContactSubmission,
+  updateContactSubmissionStatus,
+  syncResendInbox,
+  countNewContactSubmissions,
+  deleteContactSubmission,
+  type ContactStatus,
+  type ContactSource,
+} from '../../services/contact.service';
 
 const router = Router();
 const ROLES = ['technical', 'behavioral', 'sales', 'customer_success'] as const;
@@ -573,7 +583,7 @@ router.get('/candidates', adminAuthMiddleware, async (_req: Request, res: Respon
   }
 });
 
-/** PATCH /admin/candidates/:id - Update candidate name and/or set password (super admin only). Creates candidate_accounts if needed. */
+/** PATCH /admin/candidates/:id - Update candidate name and/or set password (full admin or super admin). */
 router.patch(
   '/candidates/:id',
   adminAuthMiddleware,
@@ -583,9 +593,8 @@ router.patch(
     body('password').optional().isString().isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
   ]),
   async (req: Request, res: Response) => {
-    const currentEmail = (req as Request & { user: { email?: string; sub: string } }).user?.email ?? (req as Request & { user: { sub: string } }).user?.sub;
-    if (!isSuperAdminEmail(currentEmail)) {
-      return res.status(403).json({ error: 'Only the super admin can edit candidates' });
+    if (!(await requireSuperAdminOrFullAdmin(req)).allowed) {
+      return res.status(403).json({ error: 'Admin access required to edit candidates' });
     }
     const { id } = req.params;
     const { name, password } = req.body as { name?: string; password?: string };
@@ -625,6 +634,38 @@ router.patch(
   }
 );
 
+/** DELETE /admin/candidates/:id - Remove candidate when they have no interview history */
+router.delete(
+  '/candidates/:id',
+  adminAuthMiddleware,
+  validate([param('id').isUUID()]),
+  async (req: Request, res: Response) => {
+    if (!(await requireSuperAdminOrFullAdmin(req)).allowed) {
+      return res.status(403).json({ error: 'Admin access required to delete candidates' });
+    }
+    const { id } = req.params;
+    try {
+      const { rows: interviewRows } = await query<{ id: string }>(
+        `SELECT id FROM interviews WHERE candidate_id = $1 LIMIT 1`,
+        [id]
+      );
+      if (interviewRows.length > 0) {
+        return res.status(409).json({
+          error: 'Cannot delete a candidate who has completed or in-progress interviews. Remove applications only, or keep the record for audit.',
+        });
+      }
+      await query(`DELETE FROM applications WHERE candidate_id = $1`, [id]);
+      await query(`DELETE FROM candidate_accounts WHERE candidate_id = $1`, [id]);
+      await query(`DELETE FROM candidate_profiles WHERE candidate_id = $1`, [id]);
+      const { rowCount } = await query(`DELETE FROM candidates WHERE id = $1`, [id]);
+      return res.json({ deleted: (rowCount ?? 0) > 0 });
+    } catch (e) {
+      console.error('Admin delete candidate error', e);
+      return res.status(500).json({ error: 'Failed to delete candidate' });
+    }
+  }
+);
+
 /** GET /admin/applications - List all applications (all recruiters' jobs) */
 router.get('/applications', adminAuthMiddleware, async (_req: Request, res: Response) => {
   try {
@@ -660,10 +701,68 @@ router.get('/applications', adminAuthMiddleware, async (_req: Request, res: Resp
   }
 });
 
+const APPLICATION_STATUSES = ['pending', 'interview_scheduled', 'rejected', 'accepted'] as const;
+
+/** PATCH /admin/applications/:id - Update application status */
+router.patch(
+  '/applications/:id',
+  adminAuthMiddleware,
+  validate([
+    param('id').isUUID(),
+    body('status').isIn(APPLICATION_STATUSES),
+  ]),
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body as { status: (typeof APPLICATION_STATUSES)[number] };
+      const { rows } = await query<{
+        id: string;
+        status: string;
+        candidate_id: string;
+        position_id: string;
+        created_at: string;
+      }>(
+        `UPDATE applications SET status = $2, updated_at = NOW() WHERE id = $1
+         RETURNING id, status, candidate_id, position_id, created_at`,
+        [id, status]
+      );
+      if (rows.length === 0) {
+        return res.status(404).json({ error: 'Application not found' });
+      }
+      return res.json({ application: rows[0] });
+    } catch (e) {
+      console.error('Admin update application error', e);
+      return res.status(500).json({ error: 'Failed to update application' });
+    }
+  }
+);
+
+/** DELETE /admin/applications/:id - Remove an application */
+router.delete(
+  '/applications/:id',
+  adminAuthMiddleware,
+  validate([param('id').isUUID()]),
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      await query(
+        `UPDATE scheduled_interviews SET application_id = NULL, updated_at = NOW() WHERE application_id = $1`,
+        [id]
+      );
+      const { rowCount } = await query(`DELETE FROM applications WHERE id = $1`, [id]);
+      return res.json({ deleted: (rowCount ?? 0) > 0 });
+    } catch (e) {
+      console.error('Admin delete application error', e);
+      return res.status(500).json({ error: 'Failed to delete application' });
+    }
+  }
+);
+
 /** GET /admin/overview - App-wide counters and latest schedules */
 router.get('/overview', adminAuthMiddleware, async (_req: Request, res: Response) => {
   try {
-    const [{ rows: recruiterRows }, { rows: candidateRows }, { rows: interviewRows }, { rows: scheduleRows }] = await Promise.all([
+    const [{ rows: recruiterRows }, { rows: candidateRows }, { rows: interviewRows }, { rows: scheduleRows }, newContacts] =
+      await Promise.all([
       query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM users WHERE role = 'recruiter'`),
       query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM candidates`),
       query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM interviews`),
@@ -675,12 +774,14 @@ router.get('/overview', adminAuthMiddleware, async (_req: Request, res: Response
          ORDER BY s.created_at DESC
          LIMIT 10`
       ),
+      countNewContactSubmissions(),
     ]);
     return res.json({
       metrics: {
         recruiters: Number(recruiterRows[0]?.total ?? 0),
         candidates: Number(candidateRows[0]?.total ?? 0),
         interviews: Number(interviewRows[0]?.total ?? 0),
+        newContacts,
       },
       latestSchedules: (scheduleRows as Array<Record<string, unknown>>).map((row) => ({
         ...row,
@@ -798,7 +899,7 @@ router.get(
   }
 );
 
-/** PATCH /admin/schedule/:id - Update schedule (scheduledAt, status) */
+/** PATCH /admin/schedule/:id - Update schedule (scheduledAt, status, candidate details) */
 router.patch(
   '/schedule/:id',
   adminAuthMiddleware,
@@ -806,11 +907,18 @@ router.patch(
     param('id').isUUID(),
     body('scheduledAt').optional().isISO8601(),
     body('status').optional().isIn(['scheduled', 'in_progress', 'completed', 'cancelled']),
+    body('candidateEmail').optional().isEmail(),
+    body('candidateName').optional().isString(),
   ]),
   async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const { scheduledAt, status } = req.body;
+      const { scheduledAt, status, candidateEmail, candidateName } = req.body as {
+        scheduledAt?: string;
+        status?: string;
+        candidateEmail?: string;
+        candidateName?: string;
+      };
       const updates: string[] = [];
       const params: unknown[] = [];
       let i = 1;
@@ -822,6 +930,16 @@ router.patch(
       if (status !== undefined) {
         updates.push(`status = $${i}`);
         params.push(status);
+        i++;
+      }
+      if (candidateEmail !== undefined) {
+        updates.push(`candidate_email = $${i}`);
+        params.push(candidateEmail);
+        i++;
+      }
+      if (candidateName !== undefined) {
+        updates.push(`candidate_name = $${i}`);
+        params.push(candidateName || null);
         i++;
       }
       if (updates.length === 0) {
@@ -978,5 +1096,86 @@ router.delete(
     }
   }
 );
+
+/** GET /admin/contact-submissions - List contact form + Resend inbound messages */
+router.get('/contact-submissions', adminAuthMiddleware, async (req: Request, res: Response) => {
+  try {
+    const status = req.query.status as ContactStatus | undefined;
+    const source = req.query.source as ContactSource | undefined;
+    const submissions = await listContactSubmissions({ status, source, limit: 200 });
+    return res.json({ submissions });
+  } catch (e) {
+    console.error('Admin list contact submissions error', e);
+    return res.status(500).json({ error: 'Failed to load contact submissions' });
+  }
+});
+
+/** GET /admin/contact-submissions/:id */
+router.get(
+  '/contact-submissions/:id',
+  adminAuthMiddleware,
+  validate([param('id').isUUID()]),
+  async (req: Request, res: Response) => {
+    try {
+      const submission = await getContactSubmission(req.params.id);
+      if (!submission) return res.status(404).json({ error: 'Not found' });
+      return res.json({ submission });
+    } catch (e) {
+      console.error('Admin get contact submission error', e);
+      return res.status(500).json({ error: 'Failed to load contact submission' });
+    }
+  }
+);
+
+/** PATCH /admin/contact-submissions/:id - Update status */
+router.patch(
+  '/contact-submissions/:id',
+  adminAuthMiddleware,
+  validate([
+    param('id').isUUID(),
+    body('status').isIn(['new', 'read', 'replied', 'archived']),
+  ]),
+  async (req: Request, res: Response) => {
+    try {
+      const submission = await updateContactSubmissionStatus(
+        req.params.id,
+        req.body.status as ContactStatus
+      );
+      if (!submission) return res.status(404).json({ error: 'Not found' });
+      return res.json({ submission });
+    } catch (e) {
+      console.error('Admin update contact submission error', e);
+      return res.status(500).json({ error: 'Failed to update contact submission' });
+    }
+  }
+);
+
+/** DELETE /admin/contact-submissions/:id */
+router.delete(
+  '/contact-submissions/:id',
+  adminAuthMiddleware,
+  validate([param('id').isUUID()]),
+  async (req: Request, res: Response) => {
+    try {
+      const deleted = await deleteContactSubmission(req.params.id);
+      if (!deleted) return res.status(404).json({ error: 'Not found' });
+      return res.json({ deleted: true });
+    } catch (e) {
+      console.error('Admin delete contact submission error', e);
+      return res.status(500).json({ error: 'Failed to delete contact submission' });
+    }
+  }
+);
+
+/** POST /admin/contact-submissions/sync-resend - Import inbound emails from Resend inbox */
+router.post('/contact-submissions/sync-resend', adminAuthMiddleware, async (_req: Request, res: Response) => {
+  try {
+    const result = await syncResendInbox();
+    return res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error('Admin sync Resend inbox error', e);
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to sync Resend inbox' });
+  }
+});
 
 export const adminRoutes = router;

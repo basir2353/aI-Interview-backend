@@ -94,6 +94,10 @@ export interface InterviewState {
   positionTitle?: string;
   /** Display name from schedule (preferred over resume parsing) */
   candidateDisplayName?: string;
+  /** Recruiter-chosen AI presenter for this session */
+  interviewerPersona?: 'ethan' | 'zara';
+  /** Company name shown in intro and UI (recruiter or job company) */
+  companyName?: string;
   /** Recruiter-specified duration in minutes */
   durationMinutes?: number;
   /** Token budget used (approximate) for context window management */

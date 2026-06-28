@@ -9,6 +9,12 @@ import { optionalAuth } from '../middleware/auth';
 import crypto from 'crypto';
 import { getResumeTextForMatch, computeResumeJobMatchScore } from '../../services/interview/ResumeContextService';
 import { ensurePositionsSchema, listPublicJobs } from '../../db/ensure-positions';
+import { config } from '../../config';
+import {
+  sendApplicationReceivedEmail,
+  sendInterviewScheduleEmail,
+} from '../../services/email.service';
+import { resolveScheduleBranding } from '../../services/interview/ScheduleBrandingService';
 
 const router = Router();
 const ROLES = ['technical', 'behavioral', 'sales', 'customer_success'] as const;
@@ -130,8 +136,8 @@ router.post(
         portfolioUrl?: string;
       };
 
-      const { rows: positionRows } = await query<{ id: string; role: string; is_active: boolean }>(
-        `SELECT id, role, is_active FROM positions WHERE id = $1 LIMIT 1`,
+      const { rows: positionRows } = await query<{ id: string; role: string; is_active: boolean; title: string; company_name: string | null }>(
+        `SELECT id, role, is_active, title, company_name FROM positions WHERE id = $1 LIMIT 1`,
         [positionId]
       );
       if (positionRows.length === 0) {
@@ -229,8 +235,31 @@ router.post(
         console.warn('Application match score computation failed:', e instanceof Error ? e.message : e);
       }
 
-      const { rows: posScheduleRows } = await query<{ role: string; created_by: string | null; auto_schedule_enabled: boolean }>(
-        `SELECT role, created_by, COALESCE(auto_schedule_enabled, false) AS auto_schedule_enabled FROM positions WHERE id = $1 LIMIT 1`,
+      const positionMeta = positionRows[0];
+      const jobTitle = positionMeta.title;
+      const companyName = positionMeta.company_name;
+
+      let interviewScheduled = false;
+      let scheduledAt: string | null = null;
+      let joinUrl: string | null = null;
+      let applicationEmailSent = false;
+      let interviewEmailSent = false;
+
+      if (normalizedEmail) {
+        const appMail = await sendApplicationReceivedEmail({
+          to: normalizedEmail,
+          candidateName: name,
+          jobTitle,
+          companyName,
+        });
+        applicationEmailSent = appMail.sent;
+        if (!appMail.sent) {
+          console.warn('[Apply] Application received email failed:', appMail.error);
+        }
+      }
+
+      const { rows: posScheduleRows } = await query<{ role: string; created_by: string | null; auto_schedule_enabled: boolean; title: string; company_name: string | null }>(
+        `SELECT role, created_by, COALESCE(auto_schedule_enabled, false) AS auto_schedule_enabled, title, company_name FROM positions WHERE id = $1 LIMIT 1`,
         [positionId]
       );
       const { rows: candidateInfoRows } = await query<{ email: string | null; name: string | null }>(
@@ -242,20 +271,61 @@ router.post(
       if (position?.auto_schedule_enabled && candidate?.email && position.role && ROLES.includes(position.role as (typeof ROLES)[number])) {
         try {
           const joinToken = crypto.randomBytes(32).toString('hex');
-          const scheduledAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-          scheduledAt.setHours(10, 0, 0, 0);
+          const scheduledAtDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+          scheduledAtDate.setHours(10, 0, 0, 0);
+          scheduledAt = scheduledAtDate.toISOString();
+          joinUrl = `${config.frontendUrl}/interview/join/${joinToken}`;
+          const branding = await resolveScheduleBranding({
+            createdBy: position.created_by,
+            positionId,
+          });
           await query(
-            `INSERT INTO scheduled_interviews (id, candidate_email, candidate_name, role, scheduled_at, join_token, position_id, created_by, application_id, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1, $2, $3, $4::timestamptz, $5, $6, $7, $8, NOW(), NOW())`,
-            [candidate.email, candidate.name, position.role, scheduledAt.toISOString(), joinToken, positionId, position.created_by ?? null, applicationId]
+            `INSERT INTO scheduled_interviews (id, candidate_email, candidate_name, role, scheduled_at, join_token, position_id, created_by, application_id, interviewer_persona, company_name, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, $4::timestamptz, $5, $6, $7, $8, $9, $10, NOW(), NOW())`,
+            [
+              candidate.email,
+              candidate.name,
+              position.role,
+              scheduledAt,
+              joinToken,
+              positionId,
+              position.created_by ?? null,
+              applicationId,
+              branding.interviewerPersona,
+              branding.companyName ?? position.company_name ?? companyName,
+            ]
           );
           await query(`UPDATE applications SET status = 'interview_scheduled', updated_at = NOW() WHERE id = $1`, [applicationId]);
+          interviewScheduled = true;
+
+          const mailResult = await sendInterviewScheduleEmail({
+            to: candidate.email,
+            candidateName: candidate.name,
+            role: position.role,
+            scheduledAt,
+            joinUrl,
+            companyName: position.company_name || companyName,
+            jobTitle: position.title || jobTitle,
+          });
+          interviewEmailSent = mailResult.sent;
+          if (!mailResult.sent) {
+            console.warn('[Apply] Auto-schedule interview email failed:', mailResult.error);
+          }
         } catch (e) {
           console.warn('Auto-schedule interview failed:', e instanceof Error ? e.message : e);
         }
       }
 
-      return res.status(201).json({ application: { ...applicationRows[0], match_score } });
+      return res.status(201).json({
+        application: { ...applicationRows[0], match_score },
+        interviewScheduled,
+        scheduledAt,
+        joinUrl,
+        emailsSent: {
+          application: applicationEmailSent,
+          interview: interviewEmailSent,
+        },
+      });
     } catch (e) {
       console.error('Public apply to job error', e);
       return res.status(500).json({ error: 'Failed to submit application' });

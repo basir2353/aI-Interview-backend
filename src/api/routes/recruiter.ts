@@ -10,6 +10,11 @@ import { config } from '../../config';
 import { sendInterviewScheduleEmail, sendPasswordResetEmail } from '../../services/email.service';
 import { getResumeTextForMatch, computeResumeJobMatchScore } from '../../services/interview/ResumeContextService';
 import type { DifficultyLevel, ScheduledCustomQuestion } from '../../types';
+import {
+  INTERVIEW_LANGUAGE_CODES,
+  normalizeInterviewLanguage,
+  DEFAULT_INTERVIEW_LANGUAGE,
+} from '../../constants/interviewLanguage';
 
 const router = Router();
 const ROLES = ['technical', 'behavioral', 'sales', 'customer_success'] as const;
@@ -28,6 +33,7 @@ function mapRecruiterIdentity(row: {
   name: string | null;
   company_name?: string | null;
   interviewer_persona?: string | null;
+  default_interview_language?: string | null;
 }) {
   return {
     id: row.id,
@@ -35,6 +41,7 @@ function mapRecruiterIdentity(row: {
     name: row.name,
     companyName: row.company_name ?? null,
     interviewerPersona: normalizeInterviewerPersona(row.interviewer_persona),
+    defaultInterviewLanguage: normalizeInterviewLanguage(row.default_interview_language ?? DEFAULT_INTERVIEW_LANGUAGE),
   };
 }
 
@@ -49,10 +56,12 @@ function mapScheduleRow(row: {
   interview_id: string | null;
   created_at: string;
   interviewer_persona?: string | null;
+  interview_language?: string | null;
 }) {
   return {
     ...row,
     interviewerPersona: normalizeInterviewerPersona(row.interviewer_persona),
+    interviewLanguage: normalizeInterviewLanguage(row.interview_language ?? DEFAULT_INTERVIEW_LANGUAGE),
     joinUrl: `${config.frontendUrl}/interview/join/${row.join_token}`,
   };
 }
@@ -363,6 +372,7 @@ router.post(
     body('focusAreas').optional().isString(),
     body('durationMinutes').optional().isInt({ min: 5, max: 240 }),
     body('interviewerPersona').optional().isIn(INTERVIEWER_PERSONAS),
+    body('interviewLanguage').optional().isIn(INTERVIEW_LANGUAGE_CODES),
   ]),
   async (req: Request, res: Response) => {
     const user = (req as Request & { user: { userId?: string } }).user;
@@ -376,7 +386,7 @@ router.post(
     }
     try {
       const { id } = req.params;
-      const { scheduledAt, role, message, difficulty, customQuestions, codingQuestions, focusAreas, durationMinutes, interviewerPersona } = req.body as {
+      const { scheduledAt, role, message, difficulty, customQuestions, codingQuestions, focusAreas, durationMinutes, interviewerPersona, interviewLanguage } = req.body as {
         scheduledAt: string;
         role?: (typeof ROLES)[number];
         message?: string;
@@ -386,14 +396,18 @@ router.post(
         focusAreas?: string;
         durationMinutes?: number;
         interviewerPersona?: InterviewerPersona;
+        interviewLanguage?: string;
       };
-      const { rows: recruiterRows } = await query<{ name: string | null; company_name: string | null; interviewer_persona: string | null }>(
-        `SELECT name, company_name, interviewer_persona FROM users WHERE id = $1 LIMIT 1`,
+      const { rows: recruiterRows } = await query<{ name: string | null; company_name: string | null; interviewer_persona: string | null; default_interview_language: string | null }>(
+        `SELECT name, company_name, interviewer_persona, default_interview_language FROM users WHERE id = $1 LIMIT 1`,
         [userId]
       );
       const recruiterName = recruiterRows[0]?.name ?? null;
       const recruiterCompany = recruiterRows[0]?.company_name ?? null;
       const schedulePersona = normalizeInterviewerPersona(interviewerPersona ?? recruiterRows[0]?.interviewer_persona);
+      const scheduleLanguage = normalizeInterviewLanguage(
+        interviewLanguage ?? recruiterRows[0]?.default_interview_language ?? DEFAULT_INTERVIEW_LANGUAGE
+      );
       const { rows } = await query<{
         application_id: string;
         candidate_email: string | null;
@@ -440,8 +454,8 @@ router.post(
         status: string;
         join_token: string;
       }>(
-        `INSERT INTO scheduled_interviews (id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, scheduled_at, join_token, position_id, created_by, application_id, interviewer_persona, company_name, created_at, updated_at)
-         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6, $7, $8::timestamptz, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+        `INSERT INTO scheduled_interviews (id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, scheduled_at, join_token, position_id, created_by, application_id, interviewer_persona, company_name, interview_language, created_at, updated_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6, $7, $8::timestamptz, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
          RETURNING id, candidate_email, candidate_name, role, scheduled_at, status, join_token`,
         [
           row.candidate_email,
@@ -458,6 +472,7 @@ router.post(
           row.application_id,
           schedulePersona,
           scheduleCompany,
+          scheduleLanguage,
         ]
       );
       await query(`UPDATE applications SET status = 'interview_scheduled', updated_at = NOW() WHERE id = $1`, [
@@ -647,8 +662,9 @@ router.get('/me', recruiterAuthMiddleware, async (req: Request, res: Response) =
     is_active: boolean;
     company_name: string | null;
     interviewer_persona: string | null;
+    interview_language: string | null;
   }>(
-    `SELECT id, email, name, is_active, company_name, interviewer_persona FROM users WHERE id = $1 LIMIT 1`,
+    `SELECT id, email, name, is_active, company_name, interviewer_persona, default_interview_language FROM users WHERE id = $1 LIMIT 1`,
     [userId]
   );
   if (rows.length === 0) {
@@ -669,6 +685,7 @@ router.patch(
       .custom((value) => value === null || (typeof value === 'string' && value.length <= 255))
       .withMessage('companyName must be a string up to 255 characters or null'),
     body('interviewerPersona').optional().isIn(INTERVIEWER_PERSONAS),
+    body('defaultInterviewLanguage').optional().isIn(INTERVIEW_LANGUAGE_CODES),
   ]),
   async (req: Request, res: Response) => {
     const user = (req as Request & { user: { userId?: string } }).user;
@@ -680,11 +697,12 @@ router.patch(
     if (!active) {
       return res.status(403).json({ error: 'Recruiter access is disabled by admin' });
     }
-    const { companyName, interviewerPersona } = req.body as {
+    const { companyName, interviewerPersona, defaultInterviewLanguage } = req.body as {
       companyName?: string | null;
       interviewerPersona?: InterviewerPersona;
+      defaultInterviewLanguage?: string;
     };
-    if (companyName === undefined && interviewerPersona === undefined) {
+    if (companyName === undefined && interviewerPersona === undefined && defaultInterviewLanguage === undefined) {
       return res.status(400).json({ error: 'No fields to update' });
     }
     const updates: string[] = [];
@@ -700,6 +718,11 @@ router.patch(
       params.push(interviewerPersona);
       i++;
     }
+    if (defaultInterviewLanguage !== undefined) {
+      updates.push(`default_interview_language = $${i}`);
+      params.push(normalizeInterviewLanguage(defaultInterviewLanguage));
+      i++;
+    }
     updates.push('updated_at = NOW()');
     params.push(userId);
     try {
@@ -709,9 +732,10 @@ router.patch(
         name: string | null;
         company_name: string | null;
         interviewer_persona: string | null;
+        default_interview_language: string | null;
       }>(
         `UPDATE users SET ${updates.join(', ')} WHERE id = $${i} AND role = 'recruiter'
-         RETURNING id, email, name, company_name, interviewer_persona`,
+         RETURNING id, email, name, company_name, interviewer_persona, default_interview_language`,
         params
       );
       if (rows.length === 0) {
@@ -746,8 +770,9 @@ router.get('/schedules', recruiterAuthMiddleware, async (req: Request, res: Resp
     interview_id: string | null;
     created_at: string;
     interviewer_persona: string | null;
+    interview_language: string | null;
   }>(
-    `SELECT id, candidate_email, candidate_name, role, scheduled_at, status, join_token, interview_id, created_at, interviewer_persona
+    `SELECT id, candidate_email, candidate_name, role, scheduled_at, status, join_token, interview_id, created_at, interviewer_persona, interview_language
      FROM scheduled_interviews
      WHERE created_by = $1
      ORDER BY scheduled_at DESC`,
@@ -773,6 +798,7 @@ router.post(
     body('durationMinutes').optional().isInt({ min: 5, max: 240 }),
     body('resumeUrl').optional().isString(),
     body('interviewerPersona').optional().isIn(INTERVIEWER_PERSONAS),
+    body('interviewLanguage').optional().isIn(INTERVIEW_LANGUAGE_CODES),
   ]),
   async (req: Request, res: Response) => {
     const user = (req as Request & { user: { userId?: string } }).user;
@@ -789,7 +815,7 @@ router.post(
       return res.status(403).json({ error: 'Limited access: you can only schedule from Applications, not create direct links.' });
     }
     try {
-      const { candidateEmail, candidateName, role, scheduledAt, positionId, message, difficulty, customQuestions, codingQuestions, focusAreas, durationMinutes, resumeUrl, interviewerPersona } = req.body as {
+      const { candidateEmail, candidateName, role, scheduledAt, positionId, message, difficulty, customQuestions, codingQuestions, focusAreas, durationMinutes, resumeUrl, interviewerPersona, interviewLanguage } = req.body as {
         candidateEmail: string;
         candidateName?: string;
         role: (typeof ROLES)[number];
@@ -803,6 +829,7 @@ router.post(
         durationMinutes?: number;
         resumeUrl?: string;
         interviewerPersona?: InterviewerPersona;
+        interviewLanguage?: string;
       };
       const normalizedQuestions = normalizeScheduleQuestions({
         role,
@@ -810,13 +837,16 @@ router.post(
         customQuestionsRaw: customQuestions,
         codingQuestionsRaw: codingQuestions,
       });
-      const { rows: recruiterRows } = await query<{ name: string | null; company_name: string | null; interviewer_persona: string | null }>(
-        `SELECT name, company_name, interviewer_persona FROM users WHERE id = $1 LIMIT 1`,
+      const { rows: recruiterRows } = await query<{ name: string | null; company_name: string | null; interviewer_persona: string | null; default_interview_language: string | null }>(
+        `SELECT name, company_name, interviewer_persona, default_interview_language FROM users WHERE id = $1 LIMIT 1`,
         [userId]
       );
       const recruiterName = recruiterRows[0]?.name ?? null;
       const recruiterCompany = recruiterRows[0]?.company_name ?? null;
       const schedulePersona = normalizeInterviewerPersona(interviewerPersona ?? recruiterRows[0]?.interviewer_persona);
+      const scheduleLanguage = normalizeInterviewLanguage(
+        interviewLanguage ?? recruiterRows[0]?.default_interview_language ?? DEFAULT_INTERVIEW_LANGUAGE
+      );
       let jobTitle: string | undefined;
       let positionCompany: string | null = null;
       if (positionId) {
@@ -838,8 +868,8 @@ router.post(
         status: string;
         join_token: string;
       }>(
-        `INSERT INTO scheduled_interviews (id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, scheduled_at, join_token, position_id, created_by, resume_url, interviewer_persona, company_name, created_at, updated_at)
-         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6, $7, $8::timestamptz, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+        `INSERT INTO scheduled_interviews (id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, scheduled_at, join_token, position_id, created_by, resume_url, interviewer_persona, company_name, interview_language, created_at, updated_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6, $7, $8::timestamptz, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
          RETURNING id, candidate_email, candidate_name, role, scheduled_at, status, join_token`,
         [
           candidateEmail,
@@ -856,6 +886,7 @@ router.post(
           resumeUrl?.trim() || null,
           schedulePersona,
           scheduleCompany,
+          scheduleLanguage,
         ]
       );
       if (rows.length === 0) {

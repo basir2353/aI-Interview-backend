@@ -8,17 +8,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getRedis, sessionKey, contextKey, SESSION_TTL_SECONDS } from '../../redis/client';
 import { query } from '../../db/client';
-import type {
-  InterviewState,
-  InterviewPhase,
-  InterviewReport,
-  Turn,
-  DifficultyLevel,
-  ScheduledCustomQuestion,
-} from '../../types';
+import type { InterviewState, InterviewPhase, InterviewReport, Turn, DifficultyLevel, ScheduledCustomQuestion, InterviewLanguageCode } from '../../types';
 import type { ResumeProfile } from './ResumeProfileService';
 import type { CodingInterviewModeId } from '../../constants/codingInterviewModes';
 import { resolveBrandingForInterview } from './ScheduleBrandingService';
+import { normalizeInterviewLanguage, DEFAULT_INTERVIEW_LANGUAGE } from '../../constants/interviewLanguage';
 
 export interface StartInterviewInput {
   candidateId: string;
@@ -35,6 +29,7 @@ export interface StartInterviewInput {
   durationMinutes?: number;
   interviewerPersona?: 'ethan' | 'zara';
   companyName?: string;
+  interviewLanguage?: InterviewLanguageCode;
 }
 
 const DEFAULT_PHASE_ORDER: InterviewPhase[] = ['intro', 'technical', 'behavioral', 'wrap_up', 'coding'];
@@ -84,6 +79,7 @@ export class InterviewSessionService {
       durationMinutes: input.durationMinutes,
       interviewerPersona: input.interviewerPersona,
       companyName: input.companyName,
+      interviewLanguage: normalizeInterviewLanguage(input.interviewLanguage ?? DEFAULT_INTERVIEW_LANGUAGE),
       approximateTokens: 0,
     };
 
@@ -120,7 +116,7 @@ export class InterviewSessionService {
   async getStateWithBranding(interviewId: string): Promise<InterviewState | null> {
     const state = await this.getState(interviewId);
     if (!state) return null;
-    if (state.interviewerPersona && state.companyName !== undefined) {
+    if (state.interviewerPersona && state.companyName !== undefined && state.interviewLanguage) {
       return state;
     }
     const branding = await resolveBrandingForInterview(interviewId);
@@ -129,10 +125,12 @@ export class InterviewSessionService {
       ...state,
       interviewerPersona: state.interviewerPersona ?? branding.interviewerPersona,
       companyName: state.companyName ?? branding.companyName,
+      interviewLanguage: state.interviewLanguage ?? branding.interviewLanguage,
     };
     if (
       enriched.interviewerPersona !== state.interviewerPersona ||
-      enriched.companyName !== state.companyName
+      enriched.companyName !== state.companyName ||
+      enriched.interviewLanguage !== state.interviewLanguage
     ) {
       await this.setState(interviewId, enriched);
     }

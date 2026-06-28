@@ -68,7 +68,7 @@ router.post(
   async (req: Request, res: Response) => {
     const token = req.params.token;
     const { rows } = await query(
-      `SELECT id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, position_id, application_id, resume_url, status, interview_id, created_by, interviewer_persona, company_name
+      `SELECT id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, position_id, application_id, resume_url, status, interview_id, created_by, interviewer_persona, company_name, interview_language
        FROM scheduled_interviews WHERE join_token = $1`,
       [token]
     );
@@ -92,6 +92,7 @@ router.post(
       created_by: string | null;
       interviewer_persona: string | null;
       company_name: string | null;
+      interview_language: string | null;
     };
     let customQuestions: ScheduledCustomQuestion[] = [];
     if (Array.isArray(row.custom_questions)) {
@@ -193,6 +194,7 @@ router.post(
     const branding = await resolveScheduleBranding({
       scheduleInterviewerPersona: row.interviewer_persona,
       scheduleCompanyName: row.company_name,
+      scheduleInterviewLanguage: row.interview_language,
       createdBy: row.created_by,
       positionId: row.position_id,
     });
@@ -212,6 +214,7 @@ router.post(
       durationMinutes: row.duration_minutes ?? undefined,
       interviewerPersona: branding.interviewerPersona,
       companyName: branding.companyName,
+      interviewLanguage: branding.interviewLanguage,
     });
     await query(
       `UPDATE scheduled_interviews SET interview_id = $2, status = 'in_progress', updated_at = NOW() WHERE id = $1`,

@@ -7,6 +7,8 @@ export type InterviewPhase = 'intro' | 'technical' | 'behavioral' | 'wrap_up' | 
 
 export type InterviewRole = 'technical' | 'behavioral' | 'sales' | 'customer_success';
 
+export type InterviewLanguageCode = 'en-US' | 'es' | 'fr' | 'de' | 'hi' | 'ar' | 'ur';
+
 export type DifficultyLevel = 'easy' | 'medium' | 'hard';
 
 export interface ScheduledCustomQuestion {
@@ -98,6 +100,8 @@ export interface InterviewState {
   interviewerPersona?: 'ethan' | 'zara';
   /** Company name shown in intro and UI (recruiter or job company) */
   companyName?: string;
+  /** Recruiter-set interview locale (BCP-47) for questions, TTS, and STT */
+  interviewLanguage?: InterviewLanguageCode;
   /** Recruiter-specified duration in minutes */
   durationMinutes?: number;
   /** Token budget used (approximate) for context window management */

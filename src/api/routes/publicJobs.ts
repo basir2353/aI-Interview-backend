@@ -280,8 +280,8 @@ router.post(
             positionId,
           });
           await query(
-            `INSERT INTO scheduled_interviews (id, candidate_email, candidate_name, role, scheduled_at, join_token, position_id, created_by, application_id, interviewer_persona, company_name, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1, $2, $3, $4::timestamptz, $5, $6, $7, $8, $9, $10, NOW(), NOW())`,
+            `INSERT INTO scheduled_interviews (id, candidate_email, candidate_name, role, scheduled_at, join_token, position_id, created_by, application_id, interviewer_persona, company_name, interview_language, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, $4::timestamptz, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())`,
             [
               candidate.email,
               candidate.name,
@@ -293,6 +293,7 @@ router.post(
               applicationId,
               branding.interviewerPersona,
               branding.companyName ?? position.company_name ?? companyName,
+              branding.interviewLanguage,
             ]
           );
           await query(`UPDATE applications SET status = 'interview_scheduled', updated_at = NOW() WHERE id = $1`, [applicationId]);

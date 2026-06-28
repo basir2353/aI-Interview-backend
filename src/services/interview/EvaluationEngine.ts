@@ -6,6 +6,7 @@
 
 import { getLLMService } from '../../ai/llm';
 import { SYSTEM_PROMPT_EVALUATION, buildEvaluationPrompt } from '../../ai/prompts';
+import { buildEvaluationLanguageBlock, normalizeInterviewLanguage, DEFAULT_INTERVIEW_LANGUAGE, type InterviewLanguageCode } from '../../constants/interviewLanguage';
 import type { AnswerEvaluation } from '../../types';
 
 const MAX_SCORE = 10;
@@ -14,13 +15,16 @@ export interface EvaluateAnswerInput {
   question: string;
   answer: string;
   competencyIds: string[];
+  interviewLanguage?: InterviewLanguageCode;
 }
 
 export class EvaluationEngine {
   async evaluate(input: EvaluateAnswerInput): Promise<AnswerEvaluation> {
     try {
       const llm = getLLMService();
-      const system = SYSTEM_PROMPT_EVALUATION;
+      const system =
+        SYSTEM_PROMPT_EVALUATION +
+        buildEvaluationLanguageBlock(normalizeInterviewLanguage(input.interviewLanguage ?? DEFAULT_INTERVIEW_LANGUAGE));
       const userContent = buildEvaluationPrompt(input.question, input.answer, input.competencyIds);
 
       const response = await llm.chat(

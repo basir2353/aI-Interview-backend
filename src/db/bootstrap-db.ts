@@ -40,6 +40,7 @@ export async function bootstrapDatabase(): Promise<void> {
     await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS managed_by_admin_id UUID REFERENCES users(id) ON DELETE SET NULL;`);
     await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS company_name VARCHAR(255);`);
     await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS interviewer_persona VARCHAR(20) NOT NULL DEFAULT 'ethan';`);
+    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS default_interview_language VARCHAR(10) NOT NULL DEFAULT 'en-US';`);
     await query(`CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);`);
     await query(`CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);`);
   });
@@ -342,6 +343,7 @@ export async function bootstrapDatabase(): Promise<void> {
       await query(`ALTER TABLE scheduled_interviews ADD COLUMN IF NOT EXISTS resume_url VARCHAR(512);`);
       await query(`ALTER TABLE scheduled_interviews ADD COLUMN IF NOT EXISTS interviewer_persona VARCHAR(20) DEFAULT 'ethan';`);
       await query(`ALTER TABLE scheduled_interviews ADD COLUMN IF NOT EXISTS company_name VARCHAR(255);`);
+      await query(`ALTER TABLE scheduled_interviews ADD COLUMN IF NOT EXISTS interview_language VARCHAR(10) DEFAULT 'en-US';`);
       await query(`CREATE INDEX IF NOT EXISTS idx_scheduled_interviews_application_id ON scheduled_interviews(application_id);`);
     });
   });

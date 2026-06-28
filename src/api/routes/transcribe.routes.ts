@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'child_process';
 import { logger } from '../../config/logger';
 import { config } from '../../config';
 import { OpenAISTTService } from '../../ai/stt/OpenAISTTService';
+import { normalizeInterviewLanguage, whisperLanguageCode } from '../../constants/interviewLanguage';
 
 const router = Router();
 let whisperBuildPromise: Promise<void> | null = null;
@@ -308,10 +309,39 @@ async function normalizeUploadedAudio(inputPath: string): Promise<string> {
   return normalizedPath;
 }
 
-async function transcribeWithRemoteStt(filePath: string): Promise<string> {
+async function transcribeWithRemoteStt(filePath: string, language?: string): Promise<string> {
   const service = new OpenAISTTService();
   const buffer = fs.readFileSync(filePath);
-  return service.transcribe(buffer);
+  return service.transcribe(buffer, { language });
+}
+
+function resolveTranscribeLanguage(raw: unknown): string {
+  if (typeof raw === 'string' && raw.trim()) {
+    const normalized = normalizeInterviewLanguage(raw.trim());
+    return whisperLanguageCode(normalized);
+  }
+  return process.env.WHISPER_LANGUAGE || 'auto';
+}
+
+async function tryRemoteStt(normalizedPath: string, language?: string): Promise<string | null> {
+  if (!remoteSttConfigured()) return null;
+  try {
+    logger.info(`[transcribe] using ${remoteSttLabel()}`, {
+      baseUrl: config.stt.remote.baseUrl || '(OpenAI default)',
+      model: config.stt.remote.model,
+      language: language || 'auto',
+    });
+    const transcript = (await transcribeWithRemoteStt(normalizedPath, language)).trim();
+    return transcript || null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn('[transcribe] remote STT failed; will try local whisper if available', { error: message });
+    return null;
+  }
+}
+
+function remoteSttLabel(): string {
+  return config.stt.provider === 'speaches' || config.stt.remote.baseUrl ? 'Speaches' : 'OpenAI Whisper API';
 }
 
 function remoteSttConfigured(): boolean {
@@ -325,27 +355,11 @@ function remoteSttConfigured(): boolean {
   return Boolean(apiKey || config.ai.openaiApiKey || baseUrl);
 }
 
-async function tryRemoteStt(normalizedPath: string): Promise<string | null> {
-  if (!remoteSttConfigured()) return null;
-  try {
-    logger.info(`[transcribe] using ${remoteSttLabel()}`, {
-      baseUrl: config.stt.remote.baseUrl || '(OpenAI default)',
-      model: config.stt.remote.model,
-    });
-    const transcript = (await transcribeWithRemoteStt(normalizedPath)).trim();
-    return transcript || null;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.warn('[transcribe] remote STT failed; will try local whisper if available', { error: message });
-    return null;
-  }
-}
-
-function remoteSttLabel(): string {
-  return config.stt.provider === 'speaches' || config.stt.remote.baseUrl ? 'Speaches' : 'OpenAI Whisper API';
-}
-
-async function transcribeNormalizedAudio(normalizedPath: string, res: Response): Promise<Response> {
+async function transcribeNormalizedAudio(
+  normalizedPath: string,
+  res: Response,
+  language: string
+): Promise<Response> {
   assertReadableAudioFile(normalizedPath);
 
   if (config.stt.provider === 'openai' || config.stt.provider === 'speaches') {
@@ -356,7 +370,7 @@ async function transcribeNormalizedAudio(normalizedPath: string, res: Response):
         hasApiKey: Boolean(config.stt.remote.apiKey),
       });
     } else {
-      const remoteTranscript = await tryRemoteStt(normalizedPath);
+      const remoteTranscript = await tryRemoteStt(normalizedPath, language === 'auto' ? undefined : language);
       if (remoteTranscript) {
         return res.json({ transcript: remoteTranscript });
       }
@@ -366,7 +380,7 @@ async function transcribeNormalizedAudio(normalizedPath: string, res: Response):
 
   const whisperBin = await resolveWhisperBin();
   if (!whisperBin) {
-    const remoteTranscript = await tryRemoteStt(normalizedPath);
+    const remoteTranscript = await tryRemoteStt(normalizedPath, language === 'auto' ? undefined : language);
     if (remoteTranscript) {
       return res.json({ transcript: remoteTranscript });
     }
@@ -411,7 +425,7 @@ async function transcribeNormalizedAudio(normalizedPath: string, res: Response):
     '-f',
     normalizedPath,
     '-l',
-    process.env.WHISPER_LANGUAGE || 'auto',
+    language,
     '--no-timestamps',
     '-otxt',
   ];
@@ -428,7 +442,7 @@ async function transcribeNormalizedAudio(normalizedPath: string, res: Response):
     });
     if (remoteSttConfigured()) {
       logger.warn('[transcribe] whisper.cpp broken at runtime; falling back to remote STT');
-      const remoteTranscript = await tryRemoteStt(normalizedPath);
+      const remoteTranscript = await tryRemoteStt(normalizedPath, language === 'auto' ? undefined : language);
       if (remoteTranscript) return res.json({ transcript: remoteTranscript });
     }
     return res.status(500).json({
@@ -492,7 +506,8 @@ router.post('/', upload.single('audio'), async (req: Request, res: Response) => 
     normalizedPath = await normalizeUploadedAudio(inputPath);
 
     outputTxtPath = `${normalizedPath}.txt`;
-    return await transcribeNormalizedAudio(normalizedPath, res);
+    const language = resolveTranscribeLanguage((req.body as { language?: string }).language);
+    return await transcribeNormalizedAudio(normalizedPath, res, language);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     logger.error('[transcribe] route failed', { error: message });

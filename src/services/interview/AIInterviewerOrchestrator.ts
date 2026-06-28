@@ -15,6 +15,7 @@ import {
 } from '../../constants/codingInterviewModes';
 import { buildInterviewWelcomeParts, buildFirstWarmUpQuestion, formatFirstName } from './InterviewWelcomeService';
 import { interviewerFirstName } from '../../constants/interviewerPersona';
+import { buildInterviewLanguagePromptBlock } from '../../constants/interviewLanguage';
 import { interviewSessionService } from './InterviewSessionService';
 import { conversationManager } from './ConversationManager';
 import { questionStrategyEngine } from './QuestionStrategyEngine';
@@ -106,25 +107,32 @@ export class AIInterviewerOrchestrator {
         interviewerName,
         roleLabel: this.roleLabel(state.role),
         companyName,
+        interviewLanguage: state.interviewLanguage,
       });
     }
     const firstName = formatFirstName(profile.candidateName);
-    const roleLabel = this.roleLabel(state.role);
-    const company = companyName?.trim();
-    const positionBit = positionTitle
-      ? `You're here for the ${positionTitle} role — I've had a quick look at what you shared with us.`
-      : company
-        ? `You're here for your ${roleLabel} interview with ${company} — I've had a quick look at what you shared with us.`
-        : `You're here for your ${roleLabel} interview today — I've had a quick look at what you shared with us.`;
-    const nameBit = firstName ? `${firstName}, great to meet you.` : `Great to meet you.`;
-    const part1 = company
-      ? `Hi there — thanks for joining today. I'm ${interviewerName}, and I'll be your interviewer today on behalf of ${company}.`
-      : `Hi there — thanks for joining today. I'm ${interviewerName}, and I'll be your interviewer for this session.`;
-    return [
-      part1,
-      `${nameBit} ${positionBit}`,
-      `Think of this as a conversation, not a test. No need to rush — take your time with each answer. Alright, let's get started.`,
-    ];
+    return buildInterviewWelcomeParts(
+      {
+        candidateName: profile.candidateName,
+        positionTitle,
+        skills: [],
+        experience: [],
+        projects: [],
+        education: [],
+        certifications: [],
+        techStack: [],
+        achievements: [],
+        workHistory: [],
+        summary: '',
+      },
+      {
+        codingModeId: codingMode,
+        interviewerName,
+        roleLabel: this.roleLabel(state.role),
+        companyName,
+        interviewLanguage: state.interviewLanguage,
+      }
+    );
   }
 
   private interviewerPromptExtras(state: InterviewState): string {
@@ -163,6 +171,7 @@ export class AIInterviewerOrchestrator {
       question: lastQuestionText,
       answer: input.answerText,
       competencyIds: competencyIds.length ? competencyIds : ['communication'],
+      interviewLanguage: state.interviewLanguage,
     });
 
     const candidateTurn = conversationManager.createTurn('candidate', input.answerText, {
@@ -323,6 +332,7 @@ export class AIInterviewerOrchestrator {
         positionTitle: state.positionTitle ?? state.resumeProfile?.positionTitle,
         roleLabel: this.roleLabel(state.role),
         codingModeId: state.codingInterviewMode as CodingInterviewModeId | undefined,
+        interviewLanguage: state.interviewLanguage,
       });
     } else {
       rawReply = await this.getNextReplyInternal(state, next.questionText, next.questionId, next.phase);
@@ -434,6 +444,7 @@ export class AIInterviewerOrchestrator {
     const systemContent =
       SYSTEM_PROMPT_INTERVIEWER.replace('{{phase}}', state.phase)
         .replace('{{role}}', state.role) +
+      buildInterviewLanguagePromptBlock(state.interviewLanguage ?? 'en-US') +
       resumeContextBlock +
       focusAreasBlock +
       this.interviewerPromptExtras(state) +

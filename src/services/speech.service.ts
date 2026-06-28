@@ -6,12 +6,16 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import { logger } from '../config/logger';
+import { resolveWhisperModelPath } from '../constants/whisperConfig';
 import { spawnSync } from 'child_process';
 
 const execFileAsync = promisify(execFile);
 
 const WHISPER_BIN = process.env.WHISPER_CPP_PATH || 'whisper';
-const WHISPER_MODEL = process.env.WHISPER_MODEL_PATH || path.join(process.cwd(), 'models', 'ggml-base.bin');
+
+function whisperModelPath(): string {
+  return resolveWhisperModelPath() || path.join(process.cwd(), 'models', 'ggml-small.bin');
+}
 let whisperAvailabilityChecked = false;
 let whisperAvailable = true;
 let whisperUnavailableWarned = false;
@@ -44,7 +48,7 @@ export async function transcribeAudio(filePath: string): Promise<string> {
   if (!ensureWhisperAvailable()) return '';
   try {
     const args = [
-      '-m', WHISPER_MODEL,
+      '-m', whisperModelPath(),
       '-f', filePath,
       '-l', process.env.WHISPER_LANGUAGE || 'auto',
       '--no-timestamps',

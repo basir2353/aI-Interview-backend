@@ -8,6 +8,7 @@ import { logger } from '../../config/logger';
 import { config } from '../../config';
 import { OpenAISTTService } from '../../ai/stt/OpenAISTTService';
 import { normalizeInterviewLanguage, whisperLanguageCode, whisperSttPrompt, DEFAULT_INTERVIEW_LANGUAGE, type InterviewLanguageCode } from '../../constants/interviewLanguage';
+import { resolveWhisperModelPath } from '../../constants/whisperConfig';
 
 const router = Router();
 let whisperBuildPromise: Promise<void> | null = null;
@@ -496,15 +497,7 @@ async function transcribeNormalizedAudio(
     });
   }
 
-  const modelPath =
-    process.env.WHISPER_MODEL_PATH ||
-    pickFirstExisting([
-      path.join(process.cwd(), 'models', 'ggml-small.bin'),
-      path.join(process.cwd(), 'models', 'ggml-base.bin'),
-      path.join(process.cwd(), 'whisper.cpp', 'models', 'ggml-small.bin'),
-      path.join(process.cwd(), 'whisper.cpp', 'models', 'ggml-base.bin'),
-      path.join(process.cwd(), 'models', 'ggml-base.en.bin'),
-    ]);
+  const modelPath = resolveWhisperModelPath();
 
   if (!modelPath) {
     return res.status(500).json({

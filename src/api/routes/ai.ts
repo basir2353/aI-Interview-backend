@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getTTSService } from '../../ai/tts';
-import { edgeTtsVoiceForLanguage } from '../../constants/ttsVoices';
+import { edgeTtsVoiceForLanguage, edgeTtsVoiceLabelForLanguage } from '../../constants/ttsVoices';
 import { body } from 'express-validator';
 import { validate } from '../middleware/validate';
 import multer from 'multer';
@@ -14,18 +14,21 @@ router.post(
     validate([
         body('text').isString().notEmpty().isLength({ max: 4000 }).withMessage('Text is required'),
         body('language').optional().isString(),
+        body('persona').optional().isString(),
         body('voice').optional().isString(),
     ]),
     async (req: Request, res: Response) => {
         try {
-            const { text, language, voice } = req.body as {
+            const { text, language, voice, persona } = req.body as {
                 text: string;
                 language?: string;
                 voice?: string;
+                persona?: string;
             };
             const tts = getTTSService();
             const audioBuffer = await tts.synthesize(text, {
                 language: language || 'en-US',
+                persona,
                 voice: voice || undefined,
             });
 
@@ -46,12 +49,15 @@ router.post(
     }
 );
 
-/** GET /ai/tts/voices/:language — voice id + label for a language (UI helper) */
+/** GET /ai/tts/voices/:language — voice id + label (optional ?persona=zara|ethan) */
 router.get('/tts/voices/:language', (req: Request, res: Response) => {
     const language = req.params.language || 'en-US';
+    const persona = typeof req.query.persona === 'string' ? req.query.persona : 'ethan';
     res.json({
         language,
-        voice: edgeTtsVoiceForLanguage(language),
+        persona,
+        voice: edgeTtsVoiceForLanguage(language, persona),
+        label: edgeTtsVoiceLabelForLanguage(language, persona),
     });
 });
 

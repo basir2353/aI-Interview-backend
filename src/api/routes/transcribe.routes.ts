@@ -317,7 +317,11 @@ async function transcribeWithRemoteStt(filePath: string, language?: string): Pro
 
 function resolveTranscribeLanguage(raw: unknown): string {
   if (typeof raw === 'string' && raw.trim()) {
+    const trimmed = raw.trim().toLowerCase();
+    if (trimmed === 'auto' || trimmed === 'mixed') return 'auto';
     const normalized = normalizeInterviewLanguage(raw.trim());
+    // Auto-detect handles Arabic+English, Urdu+English, and other code-switching.
+    if (normalized !== 'en-US') return 'auto';
     return whisperLanguageCode(normalized);
   }
   return process.env.WHISPER_LANGUAGE || 'auto';

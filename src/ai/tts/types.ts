@@ -5,6 +5,8 @@
 export interface TTSOptions {
   /** Interview language code (en-US, ur, ar, …) or BCP-47 tag. */
   language?: string;
+  /** ethan = male voice, zara = female voice */
+  persona?: 'ethan' | 'zara' | string;
   /** Override Edge/OpenAI voice id. */
   voice?: string;
   /** Prosody rate, e.g. "+0%" or "-10%". */

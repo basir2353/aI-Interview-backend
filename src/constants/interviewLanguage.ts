@@ -60,17 +60,17 @@ export function interviewLanguagePromptName(code: InterviewLanguageCode): string
 export function buildInterviewLanguagePromptBlock(code: InterviewLanguageCode): string {
   const lang = interviewLanguagePromptName(code);
   if (code === 'en-US') {
-    return '\nLANGUAGE: Conduct the entire interview in English. All spoken replies and questions must be in English.';
+    return '\nLANGUAGE: Conduct the entire interview in English. All spoken replies and questions must be in English. The candidate may occasionally use another language — still understand their answer fully.';
   }
-  return `\nLANGUAGE: Conduct the entire interview in ${lang}. All spoken replies and questions must be in ${lang}. If the candidate mixes languages, respond in ${lang} and gently encourage them to continue in ${lang}. Keep JSON keys in English; only the "reply" field content is in ${lang}.`;
+  return `\nLANGUAGE: Conduct the entire interview in ${lang}. All spoken replies and questions must be in ${lang}. The candidate may answer in ${lang}, English, or a mix (code-switching) — always understand the full meaning and respond in ${lang}. Keep JSON keys in English; only the "reply" field content is in ${lang}.`;
 }
 
 export function buildEvaluationLanguageBlock(code: InterviewLanguageCode): string {
   const lang = interviewLanguagePromptName(code);
   if (code === 'en-US') {
-    return '';
+    return '\nThe candidate may answer in English or mix other languages. Evaluate the semantic content of the answer. Write feedbackSnippet and redFlags in English for the recruiter.';
   }
-  return `\nThe candidate may answer in ${lang} (or a mix). Understand answers in any language. Write feedbackSnippet and redFlags in English for the recruiter.`;
+  return `\nThe candidate may answer in ${lang}, English, or a mix of both. Transcribe and evaluate the full meaning regardless of which language each phrase uses. Write feedbackSnippet and redFlags in English for the recruiter.`;
 }
 
 export interface WelcomeLocaleContext {

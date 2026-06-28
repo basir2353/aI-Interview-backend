@@ -12,7 +12,9 @@ export class EdgeTTSService implements ITTSService {
       throw new Error('Text is required for TTS');
     }
 
-    const voice = options?.voice || edgeTtsVoiceForLanguage(options?.language ?? 'en-US');
+    const voice =
+      options?.voice ||
+      edgeTtsVoiceForLanguage(options?.language ?? 'en-US', options?.persona);
     const tts = new EdgeTTS(trimmed, voice, {
       rate: options?.rate ?? EDGE_TTS_PROSODY_RATE,
     });

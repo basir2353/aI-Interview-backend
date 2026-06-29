@@ -15,7 +15,7 @@ import {
 } from '../../constants/codingInterviewModes';
 import { buildInterviewWelcomeParts, formatFirstName } from './InterviewWelcomeService';
 import { interviewerFirstName } from '../../constants/interviewerPersona';
-import { buildInterviewLanguagePromptBlock, normalizeInterviewLanguage } from '../../constants/interviewLanguage';
+import { buildInterviewLanguagePromptBlock, normalizeInterviewLanguage, llmReplyLanguageReminder, localizedInterviewClosing } from '../../constants/interviewLanguage';
 import { interviewSessionService } from './InterviewSessionService';
 import { conversationManager } from './ConversationManager';
 import { questionStrategyEngine } from './QuestionStrategyEngine';
@@ -166,7 +166,7 @@ export class AIInterviewerOrchestrator {
     const lastQuestionText = lastAiTurn?.content ?? '';
     const lastQuestionId = lastAiTurn?.questionId;
 
-    if (isLikelyEchoAnswer(input.answerText, lastQuestionText)) {
+    if (isLikelyEchoAnswer(input.answerText, lastQuestionText, state.interviewLanguage)) {
       return { success: false, state, failureReason: 'echo_detected' };
     }
 
@@ -216,7 +216,7 @@ export class AIInterviewerOrchestrator {
       return {
         success: true,
         state: updatedState,
-        nextReply: 'Thank you for your time today. That concludes our interview. You will receive feedback shortly.',
+        nextReply: localizedInterviewClosing(normalizeInterviewLanguage(state.interviewLanguage)),
         evaluation: { score: evaluation.score, maxScore: evaluation.maxScore },
         report,
       };
@@ -502,6 +502,8 @@ export class AIInterviewerOrchestrator {
     lastCandidateAnswer?: string,
     isOpeningQuestion = false
   ): Promise<string> {
+    const interviewCode = normalizeInterviewLanguage(state.interviewLanguage);
+    const langReminder = llmReplyLanguageReminder(interviewCode);
     const context = conversationManager.buildContext(state);
     const resumeContextBlock = state.resumeContext
       ? `\nCandidate resume/profile context (use thoroughly when deciding each question):\n${state.resumeContext}\n\nUse this context to personalize every question: reference their background, probe deeper into resume claims, and keep questions relevant to the candidate.`
@@ -532,11 +534,11 @@ The candidate answered: "${answerSnippet}"
 
 Analyze their answer. You have read their resume — reference specific skills, projects, companies, or claims naturally when asking the next question or follow-up. If their answer was vague, probe deeper. If strong, raise difficulty slightly. Your reply must: (1) Briefly reflect something specific they said. (2) Ask the next question; you may rephrase to connect to their answer. Next question topic/intent: ${questionText}
 
-Respond only with valid JSON: {"reply": "<your spoken reply: brief acknowledgment + one question>", "intent": "follow_up" | "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
+Respond only with valid JSON: {"reply": "<your spoken reply: brief acknowledgment + one question>", "intent": "follow_up" | "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}${langReminder}`;
     } else if (answerSnippet) {
       userInstruction = `The candidate just said: "${answerSnippet}". Analyze their answer. Reference something specific they said, then ask the next question. Next question to ask: ${questionText}
 
-Respond only with valid JSON: {"reply": "<brief acknowledgment + one question>", "intent": "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
+Respond only with valid JSON: {"reply": "<brief acknowledgment + one question>", "intent": "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}${langReminder}`;
     } else if (isOpeningQuestion) {
       const firstName = formatFirstName(state.candidateDisplayName ?? state.resumeProfile?.candidateName);
       const resumeHint = state.resumeProfile?.skills?.length
@@ -554,11 +556,11 @@ Ask ONE personalized opening question:
 - Output only the question (no second welcome). One or two short sentences max.
 - Topic hint from question bank (rephrase heavily): ${questionText}
 
-Respond only with valid JSON: {"reply": "<personalized opening question>", "intent": "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
+Respond only with valid JSON: {"reply": "<personalized opening question>", "intent": "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}${langReminder}`;
     } else {
       userInstruction = `Next question to ask: ${questionText}
 
-Respond only with valid JSON: {"reply": "<one question>", "intent": "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
+Respond only with valid JSON: {"reply": "<one question>", "intent": "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}${langReminder}`;
     }
 
     const messages = [

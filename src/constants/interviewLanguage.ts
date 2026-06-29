@@ -78,6 +78,28 @@ export function buildEvaluationLanguageBlock(code: InterviewLanguageCode): strin
   return `\nThe candidate may answer in ${lang}, English, or a mix of both. Transcribe and evaluate the full meaning regardless of which language each phrase uses. Write feedbackSnippet and redFlags in English for the recruiter.`;
 }
 
+/** Appended to LLM user instructions so follow-up questions stay in the interview locale. */
+export function llmReplyLanguageReminder(code: InterviewLanguageCode): string {
+  const lang = interviewLanguagePromptName(code);
+  if (code === 'en-US') {
+    return '\nThe JSON "reply" field MUST be entirely in English.';
+  }
+  return `\nCRITICAL: The JSON "reply" field MUST be entirely in ${lang}. Do NOT switch to English. Question bank hints may be in English — translate and speak in ${lang} only.`;
+}
+
+export function localizedInterviewClosing(code: InterviewLanguageCode): string {
+  const messages: Record<InterviewLanguageCode, string> = {
+    'en-US': 'Thank you for your time today. That concludes our interview. You will receive feedback shortly.',
+    es: 'Gracias por tu tiempo hoy. Esto concluye nuestra entrevista. Recibirás comentarios pronto.',
+    fr: 'Merci pour votre temps aujourd\'hui. Cela conclut notre entretien. Vous recevrez un retour sous peu.',
+    de: 'Danke für Ihre Zeit heute. Damit ist unser Interview beendet. Sie erhalten in Kürze Feedback.',
+    hi: 'आज के लिए धन्यवाद। यह हमारा साक्षात्कार समाप्त होता है। आपको जल्द ही प्रतिक्रिया मिलेगी।',
+    ar: 'شكراً لوقتك اليوم. هذا يختتم مقابلتنا. ستتلقى الملاحظات قريباً.',
+    ur: 'آج کے لیے شکریہ۔ یہ ہمارا انٹرویو ختم ہوتا ہے۔ آپ کو جلد فیڈبیک ملے گا۔',
+  };
+  return messages[code] ?? messages['en-US'];
+}
+
 export interface WelcomeLocaleContext {
   interviewerName: string;
   companyName?: string | null;

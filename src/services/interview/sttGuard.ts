@@ -63,12 +63,13 @@ export function isPromptVocabularyEcho(
   const tokens = STT_VOCAB_TOKENS[lang] ?? STT_VOCAB_TOKENS['en-US'];
   const words = wordsOf(transcript);
   if (words.length === 0) return true;
-  if (words.length >= 10) return false;
+  if (words.length >= 8) return false;
 
   const hits = words.filter((w) => tokens.some((t) => matchesVocabToken(w, t))).length;
   const ratio = hits / words.length;
-  if (words.length <= 4 && ratio >= 0.5) return true;
-  if (words.length <= 6 && ratio >= 0.65) return true;
+  const isNonEnglish = lang !== 'en-US';
+  if (words.length <= 4 && ratio >= (isNonEnglish ? 0.75 : 0.5)) return true;
+  if (words.length <= 6 && ratio >= (isNonEnglish ? 0.85 : 0.65)) return true;
   return false;
 }
 
@@ -84,12 +85,14 @@ export function isSttHallucination(transcript: string, interviewLanguage?: Inter
 }
 
 /** Voice answers need real substance — blocks 2–3 word noise/hallucination clips. */
-export function isAnswerTooShort(transcript: string): boolean {
+export function isAnswerTooShort(transcript: string, interviewLanguage?: InterviewLanguageCode): boolean {
   const trimmed = transcript.trim();
   if (!trimmed) return true;
+  const lang = interviewLanguage ? normalizeInterviewLanguage(interviewLanguage) : 'en-US';
   const words = trimmed.split(/\s+/).filter(Boolean);
   if (words.length >= 5) return false;
-  if (trimmed.length >= 35) return false;
+  const minChars = lang === 'en-US' ? 35 : 22;
+  if (trimmed.length >= minChars) return false;
   return true;
 }
 
@@ -98,5 +101,5 @@ export function isInvalidCandidateTranscript(
   interviewLanguage?: InterviewLanguageCode
 ): boolean {
   const lang = interviewLanguage ? normalizeInterviewLanguage(interviewLanguage) : undefined;
-  return isSttHallucination(transcript, lang) || isAnswerTooShort(transcript);
+  return isSttHallucination(transcript, lang) || isAnswerTooShort(transcript, lang);
 }

@@ -166,7 +166,12 @@ export class AIInterviewerOrchestrator {
     const lastQuestionText = lastAiTurn?.content ?? '';
     const lastQuestionId = lastAiTurn?.questionId;
 
-    if (isLikelyEchoAnswer(input.answerText, lastQuestionText, state.interviewLanguage)) {
+    const interviewerTexts = state.turns
+      .filter((t) => t.role === 'ai')
+      .map((t) => t.content ?? '')
+      .filter(Boolean);
+
+    if (isLikelyEchoAnswer(input.answerText, interviewerTexts, state.interviewLanguage)) {
       return { success: false, state, failureReason: 'echo_detected' };
     }
 

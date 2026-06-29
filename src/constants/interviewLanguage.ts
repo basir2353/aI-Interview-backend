@@ -31,18 +31,18 @@ export function whisperLanguageCode(code: InterviewLanguageCode): string {
   return code;
 }
 
-/** Bias Whisper toward interview speech in the target language. */
+/** Vocabulary-only hints for Whisper — full sentences get hallucinated back on silence. */
 export function whisperSttPrompt(code: InterviewLanguageCode): string {
-  const prompts: Record<InterviewLanguageCode, string> = {
-    'en-US': 'This is a job interview. The candidate is answering questions.',
-    es: 'Esta es una entrevista de trabajo.',
-    fr: 'Ceci est un entretien d embauche.',
-    de: 'Dies ist ein Vorstellungsgespräch.',
-    hi: 'यह एक नौकरी का साक्षात्कार है।',
-    ar: 'هذا مقابلة عمل. المرشح يجيب على الأسئلة.',
-    ur: 'یہ نوکری کا انٹرویو ہے۔ امیدوار سوالات کے جواب دے رہا ہے۔',
+  const hints: Record<InterviewLanguageCode, string> = {
+    'en-US': 'Kubernetes, Docker, Agile, Scrum, API, database, team, project',
+    es: 'entrevista, experiencia, proyecto, equipo, software',
+    fr: 'entretien, expérience, projet, équipe, logiciel',
+    de: 'Interview, Erfahrung, Projekt, Team, Software',
+    hi: 'अनुभव, प्रोजेक्ट, टीम, सॉफ्टवेयर',
+    ar: 'مقابلة، خبرة، مشروع، فريق، برمجيات',
+    ur: 'Docker، Agile، Scrum، ٹیم، پروجیکٹ، سافٹ ویئر',
   };
-  return prompts[code];
+  return hints[code];
 }
 
 export function interviewLanguageLabel(code: InterviewLanguageCode): string {

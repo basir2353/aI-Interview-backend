@@ -99,6 +99,12 @@ router.post(
             code: 'ECHO_DETECTED',
           });
         }
+        if (result.failureReason === 'invalid_transcript') {
+          return res.status(400).json({
+            error: 'No clear answer detected. Please speak for at least a few seconds, then try again.',
+            code: 'INVALID_TRANSCRIPT',
+          });
+        }
         return res.status(400).json({
           error: 'No question is currently waiting for an answer. You may have already submitted, or the session is out of sync. Try refreshing the page.',
           code: 'NO_PENDING_QUESTION',

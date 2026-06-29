@@ -9,6 +9,7 @@ import { config } from '../../config';
 import { OpenAISTTService } from '../../ai/stt/OpenAISTTService';
 import { normalizeInterviewLanguage, whisperLanguageCode, whisperSttPrompt, DEFAULT_INTERVIEW_LANGUAGE, type InterviewLanguageCode } from '../../constants/interviewLanguage';
 import { resolveWhisperModelPath } from '../../constants/whisperConfig';
+import { isSttHallucination } from '../../services/interview/sttGuard';
 
 const router = Router();
 let whisperBuildPromise: Promise<void> | null = null;
@@ -417,6 +418,32 @@ async function runLocalWhisper(
   return transcript;
 }
 
+function rejectOrReturnTranscript(
+  res: Response,
+  transcript: string,
+  interviewCode: InterviewLanguageCode
+): Response | null {
+  const trimmed = transcript.trim();
+  if (!trimmed) {
+    return res.status(422).json({
+      error: 'Empty transcript',
+      details: 'Whisper returned no text. Speak clearly and try again.',
+    });
+  }
+  if (isSttHallucination(trimmed, interviewCode)) {
+    logger.warn('[transcribe] rejected STT hallucination / prompt echo', {
+      preview: trimmed.slice(0, 120),
+      language: interviewCode,
+    });
+    return res.status(422).json({
+      error: 'No speech detected',
+      details:
+        'Could not detect your voice. Wait for the question to finish, then speak clearly for at least a few seconds.',
+    });
+  }
+  return null;
+}
+
 async function tryRemoteStt(normalizedPath: string, language?: string): Promise<string | null> {
   if (!remoteSttConfigured()) return null;
   try {
@@ -469,7 +496,9 @@ async function transcribeNormalizedAudio(
     } else {
       const remoteTranscript = await tryRemoteStt(normalizedPath, mixed ? undefined : remoteLang);
       if (remoteTranscript) {
-        return res.json({ transcript: remoteTranscript });
+        const rejected = rejectOrReturnTranscript(res, remoteTranscript, interviewCode);
+        if (rejected) return rejected;
+        return res.json({ transcript: remoteTranscript.trim() });
       }
       logger.warn('[transcribe] Remote STT unavailable; falling back to local whisper.cpp');
     }
@@ -479,7 +508,9 @@ async function transcribeNormalizedAudio(
   if (!whisperBin) {
     const remoteTranscript = await tryRemoteStt(normalizedPath, mixed ? undefined : remoteLang);
     if (remoteTranscript) {
-      return res.json({ transcript: remoteTranscript });
+      const rejected = rejectOrReturnTranscript(res, remoteTranscript, interviewCode);
+      if (rejected) return rejected;
+      return res.json({ transcript: remoteTranscript.trim() });
     }
     if (config.stt.provider === 'speaches' || config.stt.provider === 'openai') {
       return res.status(500).json({
@@ -556,14 +587,21 @@ async function transcribeNormalizedAudio(
       });
     }
 
-    return res.json({ transcript });
+    const rejected = rejectOrReturnTranscript(res, transcript, interviewCode);
+    if (rejected) return rejected;
+
+    return res.json({ transcript: transcript.trim() });
   } catch (e) {
     const errOut = e instanceof Error ? e.message : String(e);
     logger.error('[transcribe] whisper failed', { error: errOut });
     if (remoteSttConfigured()) {
       logger.warn('[transcribe] whisper.cpp failed; falling back to remote STT');
       const remoteTranscript = await tryRemoteStt(normalizedPath, mixed ? undefined : remoteLang);
-      if (remoteTranscript) return res.json({ transcript: remoteTranscript });
+      if (remoteTranscript) {
+        const rejected = rejectOrReturnTranscript(res, remoteTranscript, interviewCode);
+        if (rejected) return rejected;
+        return res.json({ transcript: remoteTranscript.trim() });
+      }
     }
     return res.status(500).json({
       error: 'whisper.cpp failed',

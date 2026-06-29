@@ -15,7 +15,7 @@ import {
 } from '../../constants/codingInterviewModes';
 import { buildInterviewWelcomeParts, formatFirstName } from './InterviewWelcomeService';
 import { interviewerFirstName } from '../../constants/interviewerPersona';
-import { buildInterviewLanguagePromptBlock } from '../../constants/interviewLanguage';
+import { buildInterviewLanguagePromptBlock, normalizeInterviewLanguage } from '../../constants/interviewLanguage';
 import { interviewSessionService } from './InterviewSessionService';
 import { conversationManager } from './ConversationManager';
 import { questionStrategyEngine } from './QuestionStrategyEngine';
@@ -23,6 +23,7 @@ import { evaluationEngine } from './EvaluationEngine';
 import { scoringReportService } from './ScoringReportService';
 import { avatarService } from '../avatar/avatar.service';
 import { isLikelyEchoAnswer } from './echoGuard';
+import { isInvalidCandidateTranscript } from './sttGuard';
 import type { InterviewState, InterviewReport } from '../../types';
 
 const LLM_INTERVIEW_TIMEOUT_MS = 45000;
@@ -32,7 +33,7 @@ export interface SubmitAnswerInput {
   answerText: string;
 }
 
-export type SubmitAnswerFailureReason = 'session_not_found' | 'no_pending_question' | 'echo_detected';
+export type SubmitAnswerFailureReason = 'session_not_found' | 'no_pending_question' | 'echo_detected' | 'invalid_transcript';
 
 export interface SubmitAnswerResult {
   success: boolean;
@@ -167,6 +168,10 @@ export class AIInterviewerOrchestrator {
 
     if (isLikelyEchoAnswer(input.answerText, lastQuestionText)) {
       return { success: false, state, failureReason: 'echo_detected' };
+    }
+
+    if (isInvalidCandidateTranscript(input.answerText, normalizeInterviewLanguage(state.interviewLanguage))) {
+      return { success: false, state, failureReason: 'invalid_transcript' };
     }
 
     const competencyIds = lastQuestionId

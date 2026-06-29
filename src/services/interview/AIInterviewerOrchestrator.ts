@@ -13,7 +13,7 @@ import {
   getCodingModePromptBlock,
   type CodingInterviewModeId,
 } from '../../constants/codingInterviewModes';
-import { buildInterviewWelcomeParts, buildFirstWarmUpQuestion, formatFirstName } from './InterviewWelcomeService';
+import { buildInterviewWelcomeParts, formatFirstName } from './InterviewWelcomeService';
 import { interviewerFirstName } from '../../constants/interviewerPersona';
 import { buildInterviewLanguagePromptBlock } from '../../constants/interviewLanguage';
 import { interviewSessionService } from './InterviewSessionService';
@@ -204,7 +204,15 @@ export class AIInterviewerOrchestrator {
 
     let aiReply: string;
     try {
-      aiReply = await this.getNextReplyInternal(updatedState, next.questionText, next.questionId, next.phase, lastQuestionText, input.answerText);
+      aiReply = await this.getNextReplyInternal(
+        updatedState,
+        next.questionText,
+        next.questionId,
+        next.phase,
+        lastQuestionText,
+        input.answerText,
+        false
+      );
     } catch (err) {
       console.error('getNextReplyInternal failed (using fallback):', err);
       aiReply = next.questionText || 'Thank you for that. Can you tell me a bit more?';
@@ -326,16 +334,19 @@ export class AIInterviewerOrchestrator {
 
     const isFirstQuestion = state.turns.length === 0;
     let rawReply: string;
-    if (isFirstQuestion) {
-      rawReply = buildFirstWarmUpQuestion({
-        candidateName: state.candidateDisplayName ?? state.resumeProfile?.candidateName,
-        positionTitle: state.positionTitle ?? state.resumeProfile?.positionTitle,
-        roleLabel: this.roleLabel(state.role),
-        codingModeId: state.codingInterviewMode as CodingInterviewModeId | undefined,
-        interviewLanguage: state.interviewLanguage,
-      });
-    } else {
-      rawReply = await this.getNextReplyInternal(state, next.questionText, next.questionId, next.phase);
+    try {
+      rawReply = await this.getNextReplyInternal(
+        state,
+        next.questionText,
+        next.questionId,
+        next.phase,
+        undefined,
+        undefined,
+        isFirstQuestion
+      );
+    } catch (err) {
+      console.error('getNextReplyInternal failed (using fallback):', err);
+      rawReply = next.questionText || 'Thank you for joining. Could you tell me about a recent project from your background?';
     }
 
     if (isFirstQuestion) {
@@ -429,7 +440,8 @@ export class AIInterviewerOrchestrator {
     questionId: string | undefined,
     phase: string | undefined,
     lastQuestionAsked?: string,
-    lastCandidateAnswer?: string
+    lastCandidateAnswer?: string,
+    isOpeningQuestion = false
   ): Promise<string> {
     const context = conversationManager.buildContext(state);
     const resumeContextBlock = state.resumeContext
@@ -463,9 +475,24 @@ Analyze their answer. You have read their resume — reference specific skills, 
 
 Respond only with valid JSON: {"reply": "<your spoken reply: brief acknowledgment + one question>", "intent": "follow_up" | "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
     } else if (answerSnippet) {
-      userInstruction = `The candidate just said: "${answerSnippet}". Analyze their answer. Reference something specific they said, then ask the next question. Next question to ask: ${questionText}`;
+      userInstruction = `The candidate just said: "${answerSnippet}". Analyze their answer. Reference something specific they said, then ask the next question. Next question to ask: ${questionText}
+
+Respond only with valid JSON: {"reply": "<brief acknowledgment + one question>", "intent": "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
+    } else if (isOpeningQuestion) {
+      const firstName = formatFirstName(state.candidateDisplayName ?? state.resumeProfile?.candidateName);
+      userInstruction = `This is the FIRST scored question right after your spoken welcome intro${firstName ? ` with ${firstName}` : ''}.
+
+You have read the candidate's resume in the system prompt. Ask ONE personalized opening question only:
+- Reference a specific project, skill, company, tool, or achievement from their background when possible.
+- Do NOT use generic openers like "walk me through your background", "tell me about yourself", or "what drew you to this role" unless the resume is completely empty.
+- Keep it conversational: one brief warm line (optional) + one clear question.
+- Question bank intent (use as topic guide, rephrase to fit their profile): ${questionText}
+
+Respond only with valid JSON: {"reply": "<spoken opening question>", "intent": "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
     } else {
-      userInstruction = `Next question to ask: ${questionText}`;
+      userInstruction = `Next question to ask: ${questionText}
+
+Respond only with valid JSON: {"reply": "<one question>", "intent": "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
     }
 
     const messages = [

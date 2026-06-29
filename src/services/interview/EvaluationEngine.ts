@@ -19,6 +19,11 @@ export interface EvaluateAnswerInput {
 }
 
 export class EvaluationEngine {
+  /** Instant placeholder while full scoring runs in the background during live interviews. */
+  placeholderEvaluation(competencyIds: string[]): AnswerEvaluation {
+    return this.neutralEvaluation(competencyIds);
+  }
+
   async evaluate(input: EvaluateAnswerInput): Promise<AnswerEvaluation> {
     try {
       const llm = getLLMService();

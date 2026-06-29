@@ -26,7 +26,7 @@ import { isLikelyEchoAnswer } from './echoGuard';
 import { isInvalidCandidateTranscript } from './sttGuard';
 import type { InterviewState, InterviewReport } from '../../types';
 
-const LLM_INTERVIEW_TIMEOUT_MS = 45000;
+const LLM_INTERVIEW_TIMEOUT_MS = 35000;
 
 export interface SubmitAnswerInput {
   interviewId: string;
@@ -178,12 +178,10 @@ export class AIInterviewerOrchestrator {
       ? questionStrategyEngine.getCompetencyIdsForQuestionId(lastQuestionId)
       : ['communication'];
 
-    const evaluation = await evaluationEngine.evaluate({
-      question: lastQuestionText,
-      answer: input.answerText,
-      competencyIds: competencyIds.length ? competencyIds : ['communication'],
-      interviewLanguage: state.interviewLanguage,
-    });
+    // Live path: do not block the next question on a second LLM scoring call.
+    const evaluation = evaluationEngine.placeholderEvaluation(
+      competencyIds.length ? competencyIds : ['communication']
+    );
 
     const candidateTurn = conversationManager.createTurn('candidate', input.answerText, {
       evaluation,
@@ -192,10 +190,21 @@ export class AIInterviewerOrchestrator {
       topicCoverage: lastQuestionId ? { [lastQuestionId]: true } : undefined,
     });
 
+    void evaluationEngine
+      .evaluate({
+        question: lastQuestionText,
+        answer: input.answerText,
+        competencyIds: competencyIds.length ? competencyIds : ['communication'],
+        interviewLanguage: state.interviewLanguage,
+      })
+      .then((full) => interviewSessionService.updateTurnEvaluation(input.interviewId, candidateTurn.id, full))
+      .catch((err) => console.error('Background answer evaluation failed:', err));
+
     const updatedState = await interviewSessionService.getStateWithBranding(input.interviewId);
     if (!updatedState) return { success: true, state: null, evaluation: { score: evaluation.score, maxScore: evaluation.maxScore } };
 
-    const requestFollowUp = evaluation.normalizedScore < 0.5 || input.answerText.length < 50;
+    const trimmedAnswer = input.answerText.trim();
+    const requestFollowUp = trimmedAnswer.length < 50;
     const next = await questionStrategyEngine.getNextQuestion({
       state: updatedState,
       requestFollowUp,
@@ -229,14 +238,6 @@ export class AIInterviewerOrchestrator {
       aiReply = next.questionText || 'Thank you for that. Can you tell me a bit more?';
     }
     let avatarVideo: string | undefined;
-    try {
-      if (avatarService.isEnabled()) {
-        const avatarResult = await avatarService.generateAvatarWithTimeout({ text: aiReply });
-        avatarVideo = avatarResult.videoUrl;
-      }
-    } catch (err) {
-      console.error('Avatar generation failed (non-blocking):', err);
-    }
     const aiTurn = conversationManager.createTurn('ai', aiReply, {
       questionId: next.questionId,
       codingStarterCode: next.starterCode ?? undefined,
@@ -248,6 +249,17 @@ export class AIInterviewerOrchestrator {
       phase: next.phase,
       currentDifficulty: next.difficulty,
     });
+
+    if (avatarService.isEnabled()) {
+      void avatarService
+        .generateAvatarWithTimeout({ text: aiReply })
+        .then((result) => {
+          if (result.videoUrl) {
+            return interviewSessionService.updateTurnAvatarVideo(input.interviewId, aiTurn.id, result.videoUrl);
+          }
+        })
+        .catch((err) => console.error('Avatar generation failed (non-blocking):', err));
+    }
 
     const finalState = await interviewSessionService.getStateWithBranding(input.interviewId);
     return {
@@ -558,7 +570,7 @@ Respond only with valid JSON: {"reply": "<one question>", "intent": "next_questi
     const llm = getLLMService();
     const response = await llm.chat(messages, {
       temperature: 0.4,
-      maxTokens: 512,
+      maxTokens: 384,
       timeoutMs: LLM_INTERVIEW_TIMEOUT_MS,
     });
     const llmFallback = isOpeningQuestion ? '' : questionText;

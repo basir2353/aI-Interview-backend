@@ -187,6 +187,21 @@ export class InterviewSessionService {
     return true;
   }
 
+  /** Patch evaluation on a candidate turn after async scoring completes. */
+  async updateTurnEvaluation(
+    interviewId: string,
+    turnId: string,
+    evaluation: Turn['evaluation']
+  ): Promise<boolean> {
+    const state = await this.getState(interviewId);
+    if (!state || !evaluation) return false;
+    const turn = state.turns.find((t) => t.id === turnId);
+    if (!turn || turn.role !== 'candidate') return false;
+    turn.evaluation = evaluation;
+    await this.setState(interviewId, state);
+    return true;
+  }
+
   /**
    * End the interview: persist end time in DB, optionally store final report,
    * and clear or retain Redis state (we retain for a while for report generation).

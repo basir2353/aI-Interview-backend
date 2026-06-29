@@ -22,6 +22,7 @@ import { questionStrategyEngine } from './QuestionStrategyEngine';
 import { evaluationEngine } from './EvaluationEngine';
 import { scoringReportService } from './ScoringReportService';
 import { avatarService } from '../avatar/avatar.service';
+import { isLikelyEchoAnswer } from './echoGuard';
 import type { InterviewState, InterviewReport } from '../../types';
 
 const LLM_INTERVIEW_TIMEOUT_MS = 45000;
@@ -31,7 +32,7 @@ export interface SubmitAnswerInput {
   answerText: string;
 }
 
-export type SubmitAnswerFailureReason = 'session_not_found' | 'no_pending_question';
+export type SubmitAnswerFailureReason = 'session_not_found' | 'no_pending_question' | 'echo_detected';
 
 export interface SubmitAnswerResult {
   success: boolean;
@@ -163,6 +164,11 @@ export class AIInterviewerOrchestrator {
     const lastAiTurn = [...state.turns].reverse().find((t) => t.role === 'ai' && !t.isIntro);
     const lastQuestionText = lastAiTurn?.content ?? '';
     const lastQuestionId = lastAiTurn?.questionId;
+
+    if (isLikelyEchoAnswer(input.answerText, lastQuestionText)) {
+      return { success: false, state, failureReason: 'echo_detected' };
+    }
+
     const competencyIds = lastQuestionId
       ? questionStrategyEngine.getCompetencyIdsForQuestionId(lastQuestionId)
       : ['communication'];

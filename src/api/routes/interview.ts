@@ -93,6 +93,12 @@ router.post(
             code: 'SESSION_NOT_FOUND',
           });
         }
+        if (result.failureReason === 'echo_detected') {
+          return res.status(400).json({
+            error: 'That sounded like the interviewer, not your answer. Please wait for the question to finish, then speak clearly.',
+            code: 'ECHO_DETECTED',
+          });
+        }
         return res.status(400).json({
           error: 'No question is currently waiting for an answer. You may have already submitted, or the session is out of sync. Try refreshing the page.',
           code: 'NO_PENDING_QUESTION',

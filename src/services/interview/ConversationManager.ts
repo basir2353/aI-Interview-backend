@@ -45,15 +45,32 @@ export class ConversationManager {
       totalTokens = this.estimateTokens(priorSummary);
       const recentTurns = turns.slice(-12);
       for (const t of recentTurns) {
+        if (t.role === 'ai' && t.isIntro) continue;
         const role = t.role === 'ai' ? 'assistant' : 'user';
-        messages.push({ role, content: t.content });
-        totalTokens += this.estimateTokens(t.content);
+        const content = t.content?.trim();
+        if (!content) continue;
+        const last = messages[messages.length - 1];
+        if (last && last.role === role) {
+          last.content = `${last.content}\n\n${content}`;
+        } else {
+          messages.push({ role, content });
+        }
+        totalTokens += this.estimateTokens(content);
       }
     } else {
       for (const t of turns) {
+        // Welcome intro beats are not part of Q&A — skip so the LLM does not monologue.
+        if (t.role === 'ai' && t.isIntro) continue;
         const role = t.role === 'ai' ? 'assistant' : 'user';
-        messages.push({ role, content: t.content });
-        totalTokens += this.estimateTokens(t.content);
+        const content = t.content?.trim();
+        if (!content) continue;
+        const last = messages[messages.length - 1];
+        if (last && last.role === role) {
+          last.content = `${last.content}\n\n${content}`;
+        } else {
+          messages.push({ role, content });
+        }
+        totalTokens += this.estimateTokens(content);
       }
     }
 

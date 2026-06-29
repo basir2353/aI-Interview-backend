@@ -262,7 +262,11 @@ export class AIInterviewerOrchestrator {
     const introTurns = aiTurns.filter((t) => t.isIntro);
     const questionTurn = aiTurns.find((t) => !t.isIntro);
 
-    if (state.welcomeDelivered && introTurns.length >= 1 && questionTurn) {
+    if (introTurns.length >= 1 && questionTurn) {
+      if (!state.welcomeDelivered) {
+        state.welcomeDelivered = true;
+        await interviewSessionService.setState(interviewId, state);
+      }
       console.log('[Interview] Welcome already delivered', {
         interviewId,
         introBeats: introTurns.length,
@@ -318,6 +322,18 @@ export class AIInterviewerOrchestrator {
     const state = await interviewSessionService.getStateWithBranding(input.interviewId);
     if (!state) {
       return { success: false, state: null, reply: '' };
+    }
+
+    const existingQuestion = state.turns.find((t) => t.role === 'ai' && !t.isIntro);
+    if (existingQuestion) {
+      const introTurns = state.turns.filter((t) => t.role === 'ai' && t.isIntro);
+      return {
+        success: true,
+        state,
+        reply: introTurns[0]?.content ?? existingQuestion.content,
+        questionId: existingQuestion.questionId,
+        phase: state.phase,
+      };
     }
 
     const next =
@@ -480,15 +496,22 @@ Respond only with valid JSON: {"reply": "<your spoken reply: brief acknowledgmen
 Respond only with valid JSON: {"reply": "<brief acknowledgment + one question>", "intent": "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
     } else if (isOpeningQuestion) {
       const firstName = formatFirstName(state.candidateDisplayName ?? state.resumeProfile?.candidateName);
-      userInstruction = `This is the FIRST scored question right after your spoken welcome intro${firstName ? ` with ${firstName}` : ''}.
+      const resumeHint = state.resumeProfile?.skills?.length
+        ? `Candidate skills include: ${state.resumeProfile.skills.slice(0, 8).join(', ')}.`
+        : state.resumeContext?.trim()
+          ? 'Use the resume context above.'
+          : 'Resume is sparse — ask about their most recent relevant role or project.';
+      userInstruction = `This is the FIRST scored question immediately after your spoken welcome intro${firstName ? ` with ${firstName}` : ''}.
 
-You have read the candidate's resume in the system prompt. Ask ONE personalized opening question only:
-- Reference a specific project, skill, company, tool, or achievement from their background when possible.
-- Do NOT use generic openers like "walk me through your background", "tell me about yourself", or "what drew you to this role" unless the resume is completely empty.
-- Keep it conversational: one brief warm line (optional) + one clear question.
-- Question bank intent (use as topic guide, rephrase to fit their profile): ${questionText}
+${resumeHint}
 
-Respond only with valid JSON: {"reply": "<spoken opening question>", "intent": "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
+Ask ONE personalized opening question:
+- MUST reference something specific from their resume (project name, company, technology, or achievement).
+- FORBIDDEN phrases: "walk me through your background", "tell me about yourself", "what drew you to this role", "kick things off", "in your own words".
+- Output only the question (no second welcome). One or two short sentences max.
+- Topic hint from question bank (rephrase heavily): ${questionText}
+
+Respond only with valid JSON: {"reply": "<personalized opening question>", "intent": "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
     } else {
       userInstruction = `Next question to ask: ${questionText}
 

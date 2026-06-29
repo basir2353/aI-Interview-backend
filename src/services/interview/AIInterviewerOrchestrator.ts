@@ -288,9 +288,10 @@ export class AIInterviewerOrchestrator {
 
     if (questionTurn && introTurns.length === 0) {
       const welcomeParts = this.buildWelcomeParts(state);
-      const introOnlyTurns = welcomeParts.map((part) =>
-        conversationManager.createTurn('ai', part, { isIntro: true })
-      );
+      const introText = welcomeParts.join(' ').trim();
+      const introOnlyTurns = introText
+        ? [conversationManager.createTurn('ai', introText, { isIntro: true })]
+        : [];
       state.turns = [...introOnlyTurns, ...state.turns];
       state.welcomeDelivered = true;
       await interviewSessionService.setState(interviewId, state);
@@ -362,13 +363,16 @@ export class AIInterviewerOrchestrator {
       );
     } catch (err) {
       console.error('getNextReplyInternal failed (using fallback):', err);
-      rawReply = next.questionText || 'Thank you for joining. Could you tell me about a recent project from your background?';
+      rawReply = isFirstQuestion
+        ? this.buildResumeOpeningFallback(state)
+        : next.questionText || 'Could you tell me more about that?';
     }
 
     if (isFirstQuestion) {
       const welcomeParts = this.buildWelcomeParts(state);
-      for (const part of welcomeParts) {
-        const introTurn = conversationManager.createTurn('ai', part, { isIntro: true });
+      const introText = welcomeParts.join(' ').trim();
+      if (introText) {
+        const introTurn = conversationManager.createTurn('ai', introText, { isIntro: true });
         await interviewSessionService.appendTurn(input.interviewId, introTurn);
       }
 
@@ -448,6 +452,22 @@ export class AIInterviewerOrchestrator {
       questionId: next.questionId,
       phase: next.phase,
     };
+  }
+
+  private buildResumeOpeningFallback(state: InterviewState): string {
+    const skill = state.resumeProfile?.skills?.[0];
+    const project = state.resumeProfile?.projects?.[0];
+    const company = state.resumeProfile?.experience?.[0];
+    if (project) {
+      return `I'd like to start with your work on ${project} — what was your role and what impact did you have?`;
+    }
+    if (skill) {
+      return `Let's begin with your ${skill} experience — can you describe a recent project where you applied it?`;
+    }
+    if (company) {
+      return `I see experience at ${company} — what was a key challenge you handled there?`;
+    }
+    return 'What is the most relevant recent project you have worked on, and what was your contribution?';
   }
 
   private async getNextReplyInternal(
@@ -530,7 +550,11 @@ Respond only with valid JSON: {"reply": "<one question>", "intent": "next_questi
       maxTokens: 512,
       timeoutMs: LLM_INTERVIEW_TIMEOUT_MS,
     });
-    const reply = extractInterviewerReply(response.content || '', questionText);
+    const llmFallback = isOpeningQuestion ? '' : questionText;
+    let reply = extractInterviewerReply(response.content || '', llmFallback);
+    if (isOpeningQuestion && !reply.trim()) {
+      reply = this.buildResumeOpeningFallback(state);
+    }
     return reply || questionText;
   }
 

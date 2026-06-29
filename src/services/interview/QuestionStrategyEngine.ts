@@ -28,7 +28,7 @@ export interface NextQuestionResult {
 
 /** Fallback when no questions in DB. Exposed for evaluation engine. */
 export const DEMO_QUESTIONS: QuestionTemplate[] = [
-  { id: 'intro-1', role: 'technical', phase: 'intro', difficulty: 'easy', text: 'Hello! Thank you for joining today. Can you tell me a bit about your background and what drew you to this role?', competencyIds: ['communication'] },
+  { id: 'intro-1', role: 'technical', phase: 'intro', difficulty: 'easy', text: '[LLM] Personalized opening from candidate resume — not spoken verbatim.', competencyIds: ['communication'] },
   { id: 'tech-1', role: 'technical', phase: 'technical', difficulty: 'medium', text: 'Describe a technical challenge you recently solved. What was your approach and outcome?', competencyIds: ['problem_solving', 'technical_depth'] },
   { id: 'tech-2', role: 'technical', phase: 'technical', difficulty: 'medium', text: 'How do you balance shipping quickly with maintaining code quality?', competencyIds: ['technical_depth', 'judgment'] },
   { id: 'tech-follow', role: 'technical', phase: 'technical', difficulty: 'medium', text: 'Could you go into more detail about the trade-offs you considered?', competencyIds: ['technical_depth'], followUpPrompt: 'When answer is vague on trade-offs' },
@@ -52,7 +52,7 @@ export class QuestionStrategyEngine {
   private fallbackQuestionFor(role: InterviewRole, phase: InterviewPhase): NextQuestionResult {
     const roleLabel = role.replace(/_/g, ' ');
     const textByPhase: Record<InterviewPhase, string> = {
-      intro: `Tell me a bit about your background and what interests you about this ${roleLabel} role.`,
+      intro: 'Personalized opening from candidate resume.',
       technical: 'Walk me through a recent challenge you faced and how you solved it.',
       behavioral: 'Tell me about a time you handled a difficult situation with a teammate or stakeholder.',
       wrap_up: 'Do you have any questions for me about the role or team?',
@@ -256,15 +256,15 @@ export class QuestionStrategyEngine {
   async getFirstQuestion(role: InterviewRole): Promise<NextQuestionResult | null> {
     const introList = await this.getQuestionsForRoleAndPhase(role, 'intro');
     const intro = introList[0];
-    if (!intro) return this.fallbackQuestionFor(role, 'intro');
     const rows = await getQuestionTemplatesForStrategy(role, 'intro').catch(() => []);
-    const row = rows.find((r) => r.id === intro.id);
+    const row = intro ? rows.find((r) => r.id === intro.id) : undefined;
     return {
-      questionText: intro.text,
-      questionId: intro.id,
+      questionText:
+        'Personalized opening: ask about one specific project, technology, company, or achievement from this candidate\'s resume. Never use generic openers.',
+      questionId: intro?.id ?? 'opening-resume',
       phase: 'intro',
       difficulty: 'easy',
-      competencyIds: intro.competencyIds,
+      competencyIds: intro?.competencyIds ?? ['communication'],
       isFollowUp: false,
       isCodingQuestion: row?.is_coding_question ?? false,
       starterCode: row?.starter_code ?? null,

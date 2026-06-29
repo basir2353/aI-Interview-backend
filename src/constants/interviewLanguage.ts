@@ -114,7 +114,7 @@ const welcomeBuilders: Record<InterviewLanguageCode, WelcomeBuilder> = {
     const sessionLine = ctx.codingModeLabel
       ? `We'll keep this pretty conversational — a bit about your experience, some problem-solving, and maybe a little ${ctx.codingModeLabel} if we get there.`
       : `Think of this as a conversation, not a test — we'll talk about your experience, how you approach problems, and a few things from your work.`;
-    const part3 = [sessionLine, 'No need to rush — take your time with each answer.', "Alright, let's get started."].join(' ');
+    const part3 = [sessionLine, 'Take your time with each answer.'].join(' ');
     return [part1, [nameLine, roleLine].join(' '), part3];
   },
   es: (ctx) => {
@@ -129,7 +129,7 @@ const welcomeBuilders: Record<InterviewLanguageCode, WelcomeBuilder> = {
     const sessionLine = ctx.codingModeLabel
       ? `Será una conversación: hablaremos de tu experiencia, resolveremos algunos problemas y, si llegamos, algo de ${ctx.codingModeLabel}.`
       : `Piensa en esto como una conversación, no un examen — hablaremos de tu experiencia y cómo abordas los problemas.`;
-    const part3 = [sessionLine, 'No hay prisa — tómate tu tiempo con cada respuesta.', 'Muy bien, empecemos.'].join(' ');
+    const part3 = [sessionLine, 'No hay prisa — tómate tu tiempo con cada respuesta.'].join(' ');
     return [part1, [nameLine, roleLine].join(' '), part3];
   },
   fr: (ctx) => {
@@ -144,7 +144,7 @@ const welcomeBuilders: Record<InterviewLanguageCode, WelcomeBuilder> = {
     const sessionLine = ctx.codingModeLabel
       ? `Ce sera une conversation : expérience, résolution de problèmes, et peut-être un peu de ${ctx.codingModeLabel}.`
       : `Considérez ceci comme une conversation — nous parlerons de votre expérience et de votre façon de résoudre les problèmes.`;
-    const part3 = [sessionLine, 'Prenez votre temps pour chaque réponse.', 'Très bien, commençons.'].join(' ');
+    const part3 = [sessionLine, 'Prenez votre temps pour chaque réponse.'].join(' ');
     return [part1, [nameLine, roleLine].join(' '), part3];
   },
   de: (ctx) => {
@@ -159,7 +159,7 @@ const welcomeBuilders: Record<InterviewLanguageCode, WelcomeBuilder> = {
     const sessionLine = ctx.codingModeLabel
       ? `Wir halten es gesprächig — Erfahrung, Problemlösung und vielleicht etwas ${ctx.codingModeLabel}.`
       : `Denken Sie daran: ein Gespräch, kein Test — wir sprechen über Erfahrung und Ihre Herangehensweise.`;
-    const part3 = [sessionLine, 'Keine Eile — nehmen Sie sich für jede Antwort Zeit.', 'Gut, legen wir los.'].join(' ');
+    const part3 = [sessionLine, 'Keine Eile — nehmen Sie sich für jede Antwort Zeit.'].join(' ');
     return [part1, [nameLine, roleLine].join(' '), part3];
   },
   hi: (ctx) => {
@@ -174,7 +174,7 @@ const welcomeBuilders: Record<InterviewLanguageCode, WelcomeBuilder> = {
     const sessionLine = ctx.codingModeLabel
       ? `यह एक बातचीत जैसा रहेगा — अनुभव, समस्या-समाधान, और शायद थोड़ा ${ctx.codingModeLabel}।`
       : `इसे परीक्षा नहीं, बातचीत समझें — हम आपके अनुभव और सोचने के तरीके के बारे में बात करेंगे।`;
-    const part3 = [sessionLine, 'जल्दबाज़ी न करें — हर जवाब के लिए अपना समय लें।', 'ठीक है, शुरू करते हैं।'].join(' ');
+    const part3 = [sessionLine, 'जल्दबाज़ी न करें — हर जवाब के लिए अपना समय लें।'].join(' ');
     return [part1, [nameLine, roleLine].join(' '), part3];
   },
   ar: (ctx) => {
@@ -189,7 +189,7 @@ const welcomeBuilders: Record<InterviewLanguageCode, WelcomeBuilder> = {
     const sessionLine = ctx.codingModeLabel
       ? `ستكون محادثة: خبرتك، حل المشكلات، وربما بعض ${ctx.codingModeLabel}.`
       : `اعتبرها محادثة وليست اختباراً — سنتحدث عن خبرتك وطريقة تفكيرك.`;
-    const part3 = [sessionLine, 'لا داعي للاستعجال — خذ وقتك في كل إجابة.', 'حسناً، لنبدأ.'].join(' ');
+    const part3 = [sessionLine, 'لا داعي للاستعجال — خذ وقتك في كل إجابة.'].join(' ');
     return [part1, [nameLine, roleLine].join(' '), part3];
   },
   ur: (ctx) => {
@@ -204,7 +204,7 @@ const welcomeBuilders: Record<InterviewLanguageCode, WelcomeBuilder> = {
     const sessionLine = ctx.codingModeLabel
       ? `یہ ایک گفتگو ہوگی — تجربہ، مسائل حل کرنا، اور شاید تھوڑا ${ctx.codingModeLabel}۔`
       : `اسے امتحان نہیں، بات چیت سمجھیں — ہم آپ کے تجربے اور سوچنے کے انداز پر بات کریں گے۔`;
-    const part3 = [sessionLine, 'جلدی نہ کریں — ہر جواب کے لیے اپنا وقت لیں۔', 'ٹھیک ہے، شروع کرتے ہیں۔'].join(' ');
+    const part3 = [sessionLine, 'جلدی نہ کریں — ہر جواب کے لیے اپنا وقت لیں۔'].join(' ');
     return [part1, [nameLine, roleLine].join(' '), part3];
   },
 };

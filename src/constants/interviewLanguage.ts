@@ -31,18 +31,9 @@ export function whisperLanguageCode(code: InterviewLanguageCode): string {
   return code;
 }
 
-/** Vocabulary-only hints for Whisper — full sentences get hallucinated back on silence. */
-export function whisperSttPrompt(code: InterviewLanguageCode): string {
-  const hints: Record<InterviewLanguageCode, string> = {
-    'en-US': 'Kubernetes, Docker, Agile, Scrum, API, database, team, project',
-    es: 'entrevista, experiencia, proyecto, equipo, software',
-    fr: 'entretien, expérience, projet, équipe, logiciel',
-    de: 'Interview, Erfahrung, Projekt, Team, Software',
-    hi: 'अनुभव, प्रोजेक्ट, टीम, सॉफ्टवेयर',
-    ar: 'مقابلة، خبرة، مشروع، فريق، برمجيات',
-    ur: 'Docker، Agile، Scrum، ٹیم، پروجیکٹ، سافٹ ویئر',
-  };
-  return hints[code];
+/** Intentionally empty — any Whisper prompt text is echoed back on silence/noise. */
+export function whisperSttPrompt(_code: InterviewLanguageCode): string {
+  return '';
 }
 
 export function interviewLanguageLabel(code: InterviewLanguageCode): string {

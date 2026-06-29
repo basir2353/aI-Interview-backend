@@ -1,6 +1,7 @@
-import { whisperSttPrompt, type InterviewLanguageCode } from '../../constants/interviewLanguage';
+import type { InterviewLanguageCode } from '../../constants/interviewLanguage';
+import { normalizeInterviewLanguage } from '../../constants/interviewLanguage';
 
-/** Whisper often returns the initial prompt verbatim on silence — reject these. */
+/** Legacy + vocabulary tokens — Whisper echoes these on silence even without a prompt. */
 const HALLUCINATION_SUBSTRINGS = [
   'this is a job interview',
   'the candidate is answering questions',
@@ -19,7 +20,20 @@ const HALLUCINATION_SUBSTRINGS = [
   'please subscribe',
   'silence',
   'music',
+  'can you hear me',
+  'let me think',
 ];
+
+/** Tokens from old Whisper prompts — partial echoes must be rejected. */
+const STT_VOCAB_TOKENS: Record<InterviewLanguageCode, string[]> = {
+  'en-US': ['kubernetes', 'docker', 'agile', 'scrum', 'api', 'database', 'team', 'project', 'software'],
+  es: ['entrevista', 'experiencia', 'proyecto', 'equipo', 'software'],
+  fr: ['entretien', 'expérience', 'projet', 'équipe', 'logiciel'],
+  de: ['interview', 'erfahrung', 'projekt', 'team', 'software'],
+  hi: ['अनुभव', 'प्रोजेक्ट', 'टीम', 'सॉफ्टवेयर'],
+  ar: ['مقابلة', 'خبرة', 'مشروع', 'فريق', 'برمجيات'],
+  ur: ['docker', 'agile', 'scrum', 'ٹیم', 'پروجیکٹ', 'سافٹ', 'سافٹ ویئر', 'software', 'project'],
+};
 
 function normalize(text: string): string {
   return text
@@ -27,6 +41,35 @@ function normalize(text: string): string {
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function wordsOf(text: string): string[] {
+  return normalize(text).split(' ').filter((w) => w.length > 1);
+}
+
+function matchesVocabToken(word: string, token: string): boolean {
+  const w = normalize(word);
+  const t = normalize(token);
+  if (!w || !t) return false;
+  return w === t || w.includes(t) || t.includes(w);
+}
+
+/** True when most words are STT vocabulary echoes, not a real answer. */
+export function isPromptVocabularyEcho(
+  transcript: string,
+  interviewLanguage?: InterviewLanguageCode
+): boolean {
+  const lang = interviewLanguage ? normalizeInterviewLanguage(interviewLanguage) : 'en-US';
+  const tokens = STT_VOCAB_TOKENS[lang] ?? STT_VOCAB_TOKENS['en-US'];
+  const words = wordsOf(transcript);
+  if (words.length === 0) return true;
+  if (words.length >= 10) return false;
+
+  const hits = words.filter((w) => tokens.some((t) => matchesVocabToken(w, t))).length;
+  const ratio = hits / words.length;
+  if (words.length <= 4 && ratio >= 0.5) return true;
+  if (words.length <= 6 && ratio >= 0.65) return true;
+  return false;
 }
 
 export function isSttHallucination(transcript: string, interviewLanguage?: InterviewLanguageCode): boolean {
@@ -37,31 +80,23 @@ export function isSttHallucination(transcript: string, interviewLanguage?: Inter
     if (t.includes(normalize(phrase))) return true;
   }
 
-  if (interviewLanguage) {
-    const prompt = whisperSttPrompt(interviewLanguage);
-    if (prompt?.trim()) {
-      const p = normalize(prompt);
-      if (p.length >= 8 && (t === p || t.includes(p) || p.includes(t))) return true;
-    }
-  }
-
-  return false;
+  return isPromptVocabularyEcho(transcript, interviewLanguage);
 }
 
-/** Real answers need substance — blocks 1–2 word noise transcripts. */
+/** Voice answers need real substance — blocks 2–3 word noise/hallucination clips. */
 export function isAnswerTooShort(transcript: string): boolean {
   const trimmed = transcript.trim();
   if (!trimmed) return true;
   const words = trimmed.split(/\s+/).filter(Boolean);
-  if (words.length >= 3) return false;
-  // Allow short but meaningful technical tokens (e.g. "React", "Docker API")
-  if (trimmed.length >= 18) return false;
-  return words.length < 2 || trimmed.length < 10;
+  if (words.length >= 5) return false;
+  if (trimmed.length >= 35) return false;
+  return true;
 }
 
 export function isInvalidCandidateTranscript(
   transcript: string,
   interviewLanguage?: InterviewLanguageCode
 ): boolean {
-  return isSttHallucination(transcript, interviewLanguage) || isAnswerTooShort(transcript);
+  const lang = interviewLanguage ? normalizeInterviewLanguage(interviewLanguage) : undefined;
+  return isSttHallucination(transcript, lang) || isAnswerTooShort(transcript);
 }

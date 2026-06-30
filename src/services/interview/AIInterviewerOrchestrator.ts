@@ -24,6 +24,7 @@ import { scoringReportService } from './ScoringReportService';
 import { avatarService } from '../avatar/avatar.service';
 import { isLikelyEchoAnswer } from './echoGuard';
 import { isInvalidCandidateTranscript } from './sttGuard';
+import { agentDebugLog } from '../../config/debugLog';
 import type { InterviewState, InterviewReport } from '../../types';
 
 const LLM_INTERVIEW_TIMEOUT_MS = 35000;
@@ -172,10 +173,22 @@ export class AIInterviewerOrchestrator {
       .filter(Boolean);
 
     if (isLikelyEchoAnswer(input.answerText, interviewerTexts, state.interviewLanguage)) {
+      agentDebugLog({
+        hypothesisId: 'D',
+        location: 'AIInterviewerOrchestrator.ts:submit',
+        message: 'answer rejected',
+        data: { reason: 'echo_detected', answerLen: input.answerText.length },
+      });
       return { success: false, state, failureReason: 'echo_detected' };
     }
 
     if (isInvalidCandidateTranscript(input.answerText, normalizeInterviewLanguage(state.interviewLanguage))) {
+      agentDebugLog({
+        hypothesisId: 'D',
+        location: 'AIInterviewerOrchestrator.ts:submit',
+        message: 'answer rejected',
+        data: { reason: 'invalid_transcript', answerLen: input.answerText.length },
+      });
       return { success: false, state, failureReason: 'invalid_transcript' };
     }
 

@@ -10,6 +10,7 @@ import { OpenAISTTService } from '../../ai/stt/OpenAISTTService';
 import { normalizeInterviewLanguage, whisperLanguageCode, whisperSttPrompt, DEFAULT_INTERVIEW_LANGUAGE, type InterviewLanguageCode } from '../../constants/interviewLanguage';
 import { resolveWhisperModelPath } from '../../constants/whisperConfig';
 import { isKnownSttHallucinationPhrase, isPromptVocabularyEcho } from '../../services/interview/sttGuard';
+import { agentDebugLog } from '../../config/debugLog';
 
 const router = Router();
 let whisperBuildPromise: Promise<void> | null = null;
@@ -431,6 +432,12 @@ function rejectOrReturnTranscript(
     });
   }
   if (isKnownSttHallucinationPhrase(trimmed)) {
+    agentDebugLog({
+      hypothesisId: 'B',
+      location: 'transcribe.routes.ts:reject',
+      message: 'transcript rejected',
+      data: { reason: 'hallucination_phrase', textLen: trimmed.length, language: interviewCode },
+    });
     logger.warn('[transcribe] rejected STT hallucination phrase', {
       preview: trimmed.slice(0, 120),
       language: interviewCode,
@@ -442,6 +449,12 @@ function rejectOrReturnTranscript(
     });
   }
   if (isPromptVocabularyEcho(trimmed, interviewCode)) {
+    agentDebugLog({
+      hypothesisId: 'B',
+      location: 'transcribe.routes.ts:reject',
+      message: 'transcript rejected',
+      data: { reason: 'vocab_echo', textLen: trimmed.length, language: interviewCode },
+    });
     logger.warn('[transcribe] rejected STT vocabulary echo', {
       preview: trimmed.slice(0, 120),
       language: interviewCode,
@@ -640,6 +653,17 @@ router.post('/', upload.single('audio'), async (req: Request, res: Response) => 
       mimetype: file.mimetype,
       size: file.size,
       path: inputPath,
+    });
+    agentDebugLog({
+      hypothesisId: 'B',
+      location: 'transcribe.routes.ts:file',
+      message: 'audio file received',
+      data: {
+        size: file.size,
+        mimetype: file.mimetype,
+        language: (req.body as { language?: string })?.language,
+        mixed: (req.body as { mixed?: string })?.mixed,
+      },
     });
 
     if (!file.size || file.size <= 0) {

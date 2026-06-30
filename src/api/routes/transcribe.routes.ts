@@ -17,6 +17,7 @@ import { buildErrorResponse } from '../../types/errors';
 
 const router = Router();
 let whisperBuildPromise: Promise<void> | null = null;
+let cachedWhisperBin: string | null | undefined;
 
 const upload = multer({
   dest: os.tmpdir(),
@@ -139,6 +140,12 @@ function getWhisperCppCandidates(): string[] {
     ];
   }
   return base;
+}
+
+async function resolveWhisperBinCached(): Promise<string | null> {
+  if (cachedWhisperBin !== undefined) return cachedWhisperBin;
+  cachedWhisperBin = await resolveWhisperBin();
+  return cachedWhisperBin;
 }
 
 async function resolveWhisperBin(): Promise<string | null> {
@@ -301,7 +308,7 @@ async function normalizeUploadedAudio(inputPath: string): Promise<string> {
     '-ac',
     '1',
     '-af',
-    'highpass=f=80,lowpass=f=8000',
+    'silenceremove=start_periods=1:start_silence=0.12:start_threshold=-42dB:stop_periods=-1:stop_silence=0.35:stop_threshold=-42dB,highpass=f=80,lowpass=f=8000',
     '-c:a',
     'pcm_s16le',
     normalizedPath,
@@ -398,13 +405,18 @@ async function runLocalWhisper(
     language,
     '--no-timestamps',
     '-otxt',
+    '-t',
+    String(config.stt.whisperThreads),
+    '-bs',
+    String(config.stt.whisperBeamSize),
   ];
   if (prompt?.trim()) {
     whisperArgs.push('--prompt', prompt.trim());
   }
 
-  logger.info('[transcribe] running whisper.cpp', { bin: whisperBin, args: whisperArgs.join(' ') });
-  const ws = await runCommand(whisperBin, whisperArgs, { timeoutMs: 240000 });
+  const started = Date.now();
+  logger.info('[transcribe] running whisper.cpp', { bin: whisperBin, threads: config.stt.whisperThreads });
+  const ws = await runCommand(whisperBin, whisperArgs, { timeoutMs: 120000 });
 
   if (ws.code !== 0) {
     const errOut = ws.stderr.slice(0, 2000) || ws.stdout.slice(0, 2000);
@@ -419,6 +431,10 @@ async function runLocalWhisper(
       // ignore
     }
   }
+  logger.info('[transcribe] whisper.cpp finished', {
+    durationMs: Date.now() - started,
+    transcriptChars: transcript.length,
+  });
   return transcript;
 }
 
@@ -491,6 +507,11 @@ function remoteSttConfigured(): boolean {
   return Boolean(apiKey || config.ai.openaiApiKey || baseUrl);
 }
 
+function shouldPreferRemoteStt(): boolean {
+  if (!config.stt.preferRemote) return false;
+  return remoteSttConfigured();
+}
+
 async function transcribeNormalizedAudio(
   normalizedPath: string,
   res: Response,
@@ -500,26 +521,30 @@ async function transcribeNormalizedAudio(
   assertReadableAudioFile(normalizedPath);
 
   const remoteLang = primaryLang === 'auto' ? undefined : primaryLang;
+  const preferRemote =
+    shouldPreferRemoteStt() ||
+    config.stt.provider === 'openai' ||
+    config.stt.provider === 'speaches';
 
-  if (config.stt.provider === 'openai' || config.stt.provider === 'speaches') {
-    if (!remoteSttConfigured()) {
-      logger.warn('[transcribe] Remote STT not fully configured; falling back to local whisper.cpp', {
-        provider: config.stt.provider,
-        hasBaseUrl: Boolean(config.stt.remote.baseUrl),
-        hasApiKey: Boolean(config.stt.remote.apiKey),
-      });
-    } else {
-      const remoteTranscript = await tryRemoteStt(normalizedPath, mixed ? undefined : remoteLang);
-      if (remoteTranscript) {
-        const rejected = rejectOrReturnTranscript(res, remoteTranscript, interviewCode);
-        if (rejected) return rejected;
-        return res.json({ transcript: remoteTranscript.trim() });
-      }
-      logger.warn('[transcribe] Remote STT unavailable; falling back to local whisper.cpp');
+  if (preferRemote && remoteSttConfigured()) {
+    const remoteTranscript = await tryRemoteStt(normalizedPath, mixed ? undefined : remoteLang);
+    if (remoteTranscript) {
+      const rejected = rejectOrReturnTranscript(res, remoteTranscript, interviewCode);
+      if (rejected) return rejected;
+      return res.json({ transcript: remoteTranscript.trim() });
     }
+    if (config.stt.provider === 'openai' || config.stt.provider === 'speaches') {
+      logger.warn('[transcribe] Remote STT failed; falling back to local whisper.cpp');
+    }
+  } else if (config.stt.provider === 'openai' || config.stt.provider === 'speaches') {
+    logger.warn('[transcribe] Remote STT not fully configured; falling back to local whisper.cpp', {
+      provider: config.stt.provider,
+      hasBaseUrl: Boolean(config.stt.remote.baseUrl),
+      hasApiKey: Boolean(config.stt.remote.apiKey),
+    });
   }
 
-  const whisperBin = await resolveWhisperBin();
+  const whisperBin = await resolveWhisperBinCached();
   if (!whisperBin) {
     const remoteTranscript = await tryRemoteStt(normalizedPath, mixed ? undefined : remoteLang);
     if (remoteTranscript) {
@@ -735,14 +760,16 @@ router.post('/', upload.single('audio'), async (req: Request, res: Response) => 
         : req.socket.remoteAddress ?? undefined;
 
     let storageKey: string | undefined;
-    try {
-      const audioBuffer = fs.readFileSync(normalizedPath);
-      storageKey = await audioStorageService.storeAudio(audioBuffer, interviewId);
-    } catch (storeErr) {
-      logger.warn('[transcribe] audio storage failed (non-blocking)', {
-        error: storeErr instanceof Error ? storeErr.message : String(storeErr),
-      });
-    }
+    void (async () => {
+      try {
+        const audioBuffer = fs.readFileSync(normalizedPath);
+        storageKey = await audioStorageService.storeAudio(audioBuffer, interviewId);
+      } catch (storeErr) {
+        logger.warn('[transcribe] audio storage failed (non-blocking)', {
+          error: storeErr instanceof Error ? storeErr.message : String(storeErr),
+        });
+      }
+    })();
 
     outputTxtPath = `${normalizedPath}.txt`;
     const body = (req.body || {}) as { language?: string; mixed?: string; interviewId?: string };
@@ -801,7 +828,7 @@ router.post('/', upload.single('audio'), async (req: Request, res: Response) => 
       return originalJson(body);
     } as typeof res.json;
 
-    return await transcribeWithRetry(normalizedPath, res, ctx, 3);
+    return await transcribeWithRetry(normalizedPath, res, ctx, 2);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     logger.error('[transcribe] route failed', { error: message });

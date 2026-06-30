@@ -3,6 +3,7 @@
  * stays env-agnostic and testable. For scale, consider validation (e.g. zod).
  */
 import path from 'path';
+import os from 'os';
 import dotenv from 'dotenv';
 
 const PRODUCTION_FRONTEND = 'https://a-i-interview-frontend.vercel.app';
@@ -84,6 +85,13 @@ export const config = {
       if (p === 'speaches' || p === 'openai' || p === 'local') return p;
       return 'local';
     })() as 'local' | 'openai' | 'speaches',
+    /** When remote STT is configured, use it before local whisper.cpp (much faster on CPU). */
+    preferRemote: process.env.STT_PREFER_REMOTE !== 'false',
+    whisperThreads: Math.min(
+      8,
+      Math.max(1, parseInt(process.env.WHISPER_THREADS || String(os.cpus()?.length || 4), 10))
+    ),
+    whisperBeamSize: parseInt(process.env.WHISPER_BEAM_SIZE || '1', 10),
     /** Remote STT (OpenAI or Speaches): POST /v1/audio/transcriptions */
     remote: {
       baseUrl:

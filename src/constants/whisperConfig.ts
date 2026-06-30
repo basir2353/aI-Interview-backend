@@ -33,9 +33,20 @@ export function resolveWhisperModelPath(): string | null {
     });
   }
 
-  for (const candidate of MODEL_CANDIDATES) {
+  const preferFast = process.env.WHISPER_FAST === 'true' || process.env.WHISPER_FAST === '1';
+  const ordered = preferFast
+    ? [
+        '/app/models/ggml-base.bin',
+        '/app/models/ggml-small.bin',
+        ...MODEL_CANDIDATES.filter(
+          (p) => p !== '/app/models/ggml-base.bin' && p !== '/app/models/ggml-small.bin'
+        ),
+      ]
+    : MODEL_CANDIDATES;
+
+  for (const candidate of ordered) {
     if (fileExists(candidate)) {
-      logger.info('[whisper] using model', { path: candidate });
+      logger.info('[whisper] using model', { path: candidate, preferFast });
       return candidate;
     }
   }

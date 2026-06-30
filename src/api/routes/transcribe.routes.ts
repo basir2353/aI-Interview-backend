@@ -9,7 +9,7 @@ import { config } from '../../config';
 import { OpenAISTTService } from '../../ai/stt/OpenAISTTService';
 import { normalizeInterviewLanguage, whisperLanguageCode, whisperSttPrompt, DEFAULT_INTERVIEW_LANGUAGE, type InterviewLanguageCode } from '../../constants/interviewLanguage';
 import { resolveWhisperModelPath } from '../../constants/whisperConfig';
-import { isSttHallucination } from '../../services/interview/sttGuard';
+import { isKnownSttHallucinationPhrase, isPromptVocabularyEcho } from '../../services/interview/sttGuard';
 
 const router = Router();
 let whisperBuildPromise: Promise<void> | null = null;
@@ -430,8 +430,19 @@ function rejectOrReturnTranscript(
       details: 'Whisper returned no text. Speak clearly and try again.',
     });
   }
-  if (isSttHallucination(trimmed, interviewCode)) {
-    logger.warn('[transcribe] rejected STT hallucination / prompt echo', {
+  if (isKnownSttHallucinationPhrase(trimmed)) {
+    logger.warn('[transcribe] rejected STT hallucination phrase', {
+      preview: trimmed.slice(0, 120),
+      language: interviewCode,
+    });
+    return res.status(422).json({
+      error: 'No speech detected',
+      details:
+        'Could not detect your voice. Wait for the question to finish, then speak clearly for at least a few seconds.',
+    });
+  }
+  if (isPromptVocabularyEcho(trimmed, interviewCode)) {
+    logger.warn('[transcribe] rejected STT vocabulary echo', {
       preview: trimmed.slice(0, 120),
       language: interviewCode,
     });

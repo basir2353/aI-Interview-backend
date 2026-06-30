@@ -39,10 +39,10 @@ function echoOverlap(answer: string, reference: string, lang: InterviewLanguageC
   if (!a || !q) return false;
   if (a === q) return true;
 
-  const overlapThreshold = lang === 'en-US' ? 0.42 : 0.55;
+  const overlapThreshold = lang === 'en-US' ? 0.58 : 0.65;
 
-  if (q.length >= 10 && (q.includes(a) || a.includes(q))) {
-    if (a.length < q.length * 0.5) return false;
+  if (q.length >= 10 && (a.includes(q) || q.includes(a))) {
+    if (a.length < q.length * 0.65) return false;
     return true;
   }
 

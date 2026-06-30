@@ -23,6 +23,7 @@ import { communityRoutes } from './routes/community';
 import { publicContactRoutes } from './routes/publicContact';
 import heygenRoutes from './routes/heygen';
 import { avatarRoutes } from './routes/avatar';
+import { getSttHealthStatus } from '../services/sttHealth';
 
 const app = express();
 
@@ -72,6 +73,11 @@ app.get('/health/db', async (_req, res) => {
       hint: 'Link PostgreSQL DATABASE_URL to the backend service in Railway → Variables.',
     });
   }
+});
+
+app.get('/health/stt', (_req, res) => {
+  const stt = getSttHealthStatus();
+  res.status(stt.status === 'error' ? 503 : 200).json(stt);
 });
 
 app.get('/health/mail', async (_req, res) => {

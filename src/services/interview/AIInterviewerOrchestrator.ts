@@ -214,10 +214,12 @@ export class AIInterviewerOrchestrator {
       }
     }
 
-    const interviewerTexts = state.turns
-      .filter((t) => t.role === 'ai')
-      .map((t) => t.content ?? '')
-      .filter(Boolean);
+    const interviewerTexts = lastAiTurn?.content?.trim()
+      ? [lastAiTurn.content.trim()]
+      : state.turns
+          .filter((t) => t.role === 'ai' && !t.isIntro)
+          .map((t) => t.content ?? '')
+          .filter(Boolean);
 
     if (isLikelyEchoAnswer(answerText, interviewerTexts, state.interviewLanguage)) {
       await interviewSessionRecordRepository.logAnswerSubmission({

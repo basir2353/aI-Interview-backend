@@ -54,3 +54,4 @@ models/*.bin
 
 # Misc
 *.pem
+/test.wav

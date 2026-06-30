@@ -35,7 +35,7 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     ts: new Date().toISOString(),
-    version: 'backend-optimized-v1',
+    version: 'backend-voice-v2',
   });
 });
 

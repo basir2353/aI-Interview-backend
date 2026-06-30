@@ -395,8 +395,7 @@ async function runLocalWhisper(
   language: string,
   prompt?: string
 ): Promise<string> {
-  const outputTxtPath = `${normalizedPath}.txt`;
-  const whisperArgs = [
+  const baseArgs = [
     '-m',
     modelPath,
     '-f',
@@ -407,35 +406,52 @@ async function runLocalWhisper(
     '-otxt',
     '-t',
     String(config.stt.whisperThreads),
-    '-bs',
-    String(config.stt.whisperBeamSize),
   ];
   if (prompt?.trim()) {
-    whisperArgs.push('--prompt', prompt.trim());
+    baseArgs.push('--prompt', prompt.trim());
   }
 
   const started = Date.now();
-  logger.info('[transcribe] running whisper.cpp', { bin: whisperBin, threads: config.stt.whisperThreads });
-  const ws = await runCommand(whisperBin, whisperArgs, { timeoutMs: 120000 });
+  const outputTxtPath = `${normalizedPath}.txt`;
 
-  if (ws.code !== 0) {
-    const errOut = ws.stderr.slice(0, 2000) || ws.stdout.slice(0, 2000);
-    throw new Error(`whisper.cpp failed: ${errOut}`);
-  }
+  const attempts: string[][] = [
+    [...baseArgs, '-bs', String(config.stt.whisperBeamSize)],
+    baseArgs,
+  ];
 
-  let transcript = extractTranscriptFromWhisperStdout(ws.stdout);
-  if (!transcript && fs.existsSync(outputTxtPath)) {
+  let lastError = '';
+  for (const whisperArgs of attempts) {
+    logger.info('[transcribe] running whisper.cpp', {
+      bin: whisperBin,
+      threads: config.stt.whisperThreads,
+      beamSize: whisperArgs.includes('-bs') ? config.stt.whisperBeamSize : 'default',
+    });
     try {
-      transcript = fs.readFileSync(outputTxtPath, 'utf8').replace(/\s+/g, ' ').trim();
-    } catch {
-      // ignore
+      const ws = await runCommand(whisperBin, whisperArgs, { timeoutMs: 120000 });
+      if (ws.code !== 0) {
+        lastError = ws.stderr.slice(0, 2000) || ws.stdout.slice(0, 2000);
+        continue;
+      }
+
+      let transcript = extractTranscriptFromWhisperStdout(ws.stdout);
+      if (!transcript && fs.existsSync(outputTxtPath)) {
+        try {
+          transcript = fs.readFileSync(outputTxtPath, 'utf8').replace(/\s+/g, ' ').trim();
+        } catch {
+          // ignore
+        }
+      }
+      logger.info('[transcribe] whisper.cpp finished', {
+        durationMs: Date.now() - started,
+        transcriptChars: transcript.length,
+      });
+      return transcript;
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
     }
   }
-  logger.info('[transcribe] whisper.cpp finished', {
-    durationMs: Date.now() - started,
-    transcriptChars: transcript.length,
-  });
-  return transcript;
+
+  throw new Error(`whisper.cpp failed: ${lastError || 'unknown error'}`);
 }
 
 function rejectOrReturnTranscript(
@@ -733,6 +749,7 @@ async function updateTranscriptionRecord(
 }
 
 router.post('/', upload.single('audio'), async (req: Request, res: Response) => {
+  const routeStarted = Date.now();
   const file = (req as any).file as
     | { path: string; originalname?: string; mimetype?: string; size?: number }
     | undefined;
@@ -829,6 +846,13 @@ router.post('/', upload.single('audio'), async (req: Request, res: Response) => 
       return originalStatus(code);
     } as typeof res.status;
     res.json = function (body: unknown) {
+      if (typeof body === 'object' && body !== null && 'transcript' in body) {
+        const enriched = body as Record<string, unknown>;
+        enriched.durationMs = Date.now() - routeStarted;
+        res.setHeader('X-Transcribe-Duration-Ms', String(enriched.durationMs));
+        finalizeRecord(enriched, responseStatus);
+        return originalJson(enriched);
+      }
       finalizeRecord(
         typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {},
         responseStatus

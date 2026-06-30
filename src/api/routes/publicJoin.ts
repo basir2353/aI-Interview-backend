@@ -11,6 +11,7 @@ import { validate } from '../middleware/validate';
 import { buildResumeContext } from '../../services/interview/ResumeContextService';
 import { parseCodingModeFromFocusAreas } from '../../constants/codingInterviewModes';
 import { resolveScheduleBranding } from '../../services/interview/ScheduleBrandingService';
+import { getClientIp } from '../middleware/interviewSessionAuth';
 import type { DifficultyLevel, ScheduledCustomQuestion } from '../../types';
 
 const router = Router();
@@ -111,10 +112,15 @@ router.post(
     if (row.interview_id && row.status === 'in_progress') {
       const state = await interviewSessionService.getStateWithBranding(row.interview_id);
       if (state) {
+        const sessionToken = await interviewSessionService.reissueSessionToken(
+          row.interview_id,
+          state.candidateId
+        );
         return res.json({
           interviewId: row.interview_id,
           alreadyStarted: true,
           state,
+          sessionToken,
         });
       }
     }
@@ -199,7 +205,7 @@ router.post(
       positionId: row.position_id,
     });
 
-    const { interviewId, state } = await interviewSessionService.start({
+    const { interviewId, state, sessionToken } = await interviewSessionService.start({
       candidateId,
       role: row.role as 'technical' | 'behavioral' | 'sales' | 'customer_success',
       positionId: row.position_id ?? undefined,
@@ -215,6 +221,7 @@ router.post(
       interviewerPersona: branding.interviewerPersona,
       companyName: branding.companyName,
       interviewLanguage: branding.interviewLanguage,
+      clientIp: getClientIp(req),
     });
     await query(
       `UPDATE scheduled_interviews SET interview_id = $2, status = 'in_progress', updated_at = NOW() WHERE id = $1`,
@@ -223,6 +230,7 @@ router.post(
     res.status(201).json({
       interviewId,
       state,
+      sessionToken,
     });
   }
 );

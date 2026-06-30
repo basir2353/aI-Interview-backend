@@ -10,6 +10,10 @@ import { OpenAISTTService } from '../../ai/stt/OpenAISTTService';
 import { normalizeInterviewLanguage, whisperLanguageCode, whisperSttPrompt, DEFAULT_INTERVIEW_LANGUAGE, type InterviewLanguageCode } from '../../constants/interviewLanguage';
 import { resolveWhisperModelPath } from '../../constants/whisperConfig';
 import { isKnownSttHallucinationPhrase, isPromptVocabularyEcho } from '../../services/interview/sttGuard';
+import { audioStorageService } from '../../services/storage/AudioStorageService';
+import { query } from '../../db/client';
+import { v4 as uuidv4 } from 'uuid';
+import { buildErrorResponse } from '../../types/errors';
 
 const router = Router();
 let whisperBuildPromise: Promise<void> | null = null;
@@ -621,6 +625,60 @@ async function transcribeNormalizedAudio(
   }
 }
 
+async function transcribeWithRetry(
+  normalizedPath: string,
+  res: Response,
+  ctx: { primaryLang: string; mixed: boolean; interviewCode: InterviewLanguageCode },
+  maxAttempts = 3
+): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await transcribeNormalizedAudio(normalizedPath, res, ctx);
+    } catch (e) {
+      lastError = e;
+      if (attempt < maxAttempts) {
+        const delayMs = Math.min(1000 * 2 ** (attempt - 1), 8000);
+        logger.warn('[transcribe] attempt failed, retrying', { attempt, delayMs });
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  return res.status(500).json({
+    ...buildErrorResponse('TRANSCRIPTION_FAILED'),
+    details: message,
+  });
+}
+
+async function recordTranscription(input: {
+  interviewId?: string;
+  storageKey?: string;
+  transcript?: string;
+  attemptNumber: number;
+  status: string;
+  errorMessage?: string;
+  clientIp?: string;
+}): Promise<string> {
+  const id = uuidv4();
+  await query(
+    `INSERT INTO transcription_records (
+      id, interview_id, audio_storage_key, transcript, attempt_number, status, error_message, client_ip, created_at, completed_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(), CASE WHEN $6 = 'completed' THEN NOW() ELSE NULL END)`,
+    [
+      id,
+      input.interviewId ?? null,
+      input.storageKey ?? null,
+      input.transcript ?? null,
+      input.attemptNumber,
+      input.status,
+      input.errorMessage ?? null,
+      input.clientIp ?? null,
+    ]
+  );
+  return id;
+}
+
 router.post('/', upload.single('audio'), async (req: Request, res: Response) => {
   const file = (req as any).file as
     | { path: string; originalname?: string; mimetype?: string; size?: number }
@@ -649,11 +707,36 @@ router.post('/', upload.single('audio'), async (req: Request, res: Response) => 
     // Normalize to 16kHz mono PCM_s16le for whisper.cpp (skip ffmpeg when frontend already sends WAV).
     normalizedPath = await normalizeUploadedAudio(inputPath);
 
+    const interviewId = typeof req.body?.interviewId === 'string' ? req.body.interviewId : undefined;
+    const clientIp =
+      typeof req.headers['x-forwarded-for'] === 'string'
+        ? req.headers['x-forwarded-for'].split(',')[0].trim()
+        : req.socket.remoteAddress ?? undefined;
+
+    let storageKey: string | undefined;
+    try {
+      const audioBuffer = fs.readFileSync(normalizedPath);
+      storageKey = await audioStorageService.storeAudio(audioBuffer, interviewId);
+    } catch (storeErr) {
+      logger.warn('[transcribe] audio storage failed (non-blocking)', {
+        error: storeErr instanceof Error ? storeErr.message : String(storeErr),
+      });
+    }
+
     outputTxtPath = `${normalizedPath}.txt`;
-    const body = (req.body || {}) as { language?: string; mixed?: string };
+    const body = (req.body || {}) as { language?: string; mixed?: string; interviewId?: string };
     const ctx = resolveTranscribeRequest(body);
     logger.info('[transcribe] language context', ctx);
-    return await transcribeNormalizedAudio(normalizedPath, res, ctx);
+
+    void recordTranscription({
+      interviewId,
+      storageKey,
+      attemptNumber: 1,
+      status: 'pending',
+      clientIp,
+    });
+
+    return await transcribeWithRetry(normalizedPath, res, ctx, 3);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     logger.error('[transcribe] route failed', { error: message });

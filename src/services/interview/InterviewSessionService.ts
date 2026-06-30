@@ -1,18 +1,34 @@
 /**
  * Interview Session Engine: create, start, end sessions and maintain state in Redis.
  * State is the source of truth during the interview; PostgreSQL stores persistence
- * (interview row, report) for reporting and audit. Designed for thousands of
- * concurrent sessions via Redis and minimal DB writes during the session.
+ * (interview row, responses, report, session backups) for reporting and audit.
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { getRedis, sessionKey, contextKey, SESSION_TTL_SECONDS } from '../../redis/client';
+import { getRedis, sessionKey, SESSION_TTL_SECONDS } from '../../redis/client';
 import { query } from '../../db/client';
-import type { InterviewState, InterviewPhase, InterviewReport, Turn, DifficultyLevel, ScheduledCustomQuestion, InterviewLanguageCode } from '../../types';
+import type {
+  InterviewState,
+  InterviewPhase,
+  InterviewReport,
+  Turn,
+  DifficultyLevel,
+  ScheduledCustomQuestion,
+  InterviewLanguageCode,
+  AnswerEvaluation,
+  ReportStatus,
+} from '../../types';
 import type { ResumeProfile } from './ResumeProfileService';
 import type { CodingInterviewModeId } from '../../constants/codingInterviewModes';
 import { resolveBrandingForInterview } from './ScheduleBrandingService';
 import { normalizeInterviewLanguage, DEFAULT_INTERVIEW_LANGUAGE } from '../../constants/interviewLanguage';
+import { interviewResponseRepository } from '../../repositories/InterviewResponseRepository';
+import { interviewSessionRecordRepository } from '../../repositories/InterviewSessionRecordRepository';
+import { sessionPersistenceService } from './SessionPersistenceService';
+import { phaseTransitionService } from './PhaseTransitionService';
+import { reportFinalizationService } from './ReportFinalizationService';
+import { issueInterviewSessionToken, hashSessionToken } from '../../utils/interviewSessionToken';
+import { logger } from '../../config/logger';
 
 export interface StartInterviewInput {
   candidateId: string;
@@ -30,6 +46,7 @@ export interface StartInterviewInput {
   interviewerPersona?: 'ethan' | 'zara';
   companyName?: string;
   interviewLanguage?: InterviewLanguageCode;
+  clientIp?: string;
 }
 
 const DEFAULT_PHASE_ORDER: InterviewPhase[] = ['intro', 'technical', 'behavioral', 'wrap_up', 'coding'];
@@ -37,13 +54,21 @@ const DEFAULT_PHASE_ORDER: InterviewPhase[] = ['intro', 'technical', 'behavioral
 export interface StartInterviewResult {
   interviewId: string;
   state: InterviewState;
+  sessionToken: string;
+}
+
+export interface PersistCandidateResponseInput {
+  interviewId: string;
+  candidateId: string;
+  turn: Turn;
+  questionId?: string | null;
+  codeContent?: string | null;
+  explanationText?: string | null;
+  codeLanguage?: string | null;
+  evaluation: AnswerEvaluation;
 }
 
 export class InterviewSessionService {
-  /**
-   * Create a new interview and persist to DB; create Redis session with initial state.
-   * Phase starts at intro. Client can then call getState and begin the conversation.
-   */
   async start(input: StartInterviewInput): Promise<StartInterviewResult> {
     const interviewId = uuidv4();
     const now = new Date().toISOString();
@@ -69,6 +94,8 @@ export class InterviewSessionService {
       welcomeDelivered: false,
       role: input.role,
       phase: 'intro',
+      phaseStartedAt: now,
+      phaseQuestionCount: 0,
       startedAt: now,
       turns: [],
       topicCoverage: {},
@@ -83,9 +110,7 @@ export class InterviewSessionService {
       approximateTokens: 0,
     };
 
-    const redis = getRedis();
-    const key = sessionKey(interviewId);
-    await redis.setex(key, SESSION_TTL_SECONDS, JSON.stringify(state));
+    await this.setState(interviewId, state);
 
     await query(
       `INSERT INTO interviews (id, candidate_id, position_id, role, status, started_at, updated_at)
@@ -93,26 +118,43 @@ export class InterviewSessionService {
       [interviewId, input.candidateId, input.positionId ?? null, input.role, now]
     );
 
-    return { interviewId, state };
+    const sessionToken = issueInterviewSessionToken(interviewId, input.candidateId);
+    await interviewSessionRecordRepository.upsertActiveSession({
+      interviewId,
+      candidateId: input.candidateId,
+      sessionTokenHash: hashSessionToken(sessionToken),
+      phase: 'intro',
+      clientIp: input.clientIp,
+    });
+
+    logger.info('Interview session started', { interviewId, candidateId: input.candidateId, role: input.role });
+
+    return { interviewId, state, sessionToken };
   }
 
-  /**
-   * Load session state from Redis. Returns null if session expired or not found.
-   */
   async getState(interviewId: string): Promise<InterviewState | null> {
     const redis = getRedis();
     const raw = await redis.get(sessionKey(interviewId));
-    if (!raw) return null;
-    try {
-      const state = JSON.parse(raw) as InterviewState;
-      await redis.expire(sessionKey(interviewId), SESSION_TTL_SECONDS);
-      return state;
-    } catch {
-      return null;
+    if (raw) {
+      try {
+        const state = JSON.parse(raw) as InterviewState;
+        await redis.expire(sessionKey(interviewId), SESSION_TTL_SECONDS);
+        return state;
+      } catch {
+        // fall through to backup recovery
+      }
     }
+    return this.recoverFromBackup(interviewId);
   }
 
-  /** Load session state and backfill recruiter branding from the schedule when missing (older sessions). */
+  async recoverFromBackup(interviewId: string): Promise<InterviewState | null> {
+    const recovered = await sessionPersistenceService.recoverState(interviewId);
+    if (recovered) {
+      await this.setState(interviewId, recovered, { skipBackupSchedule: true });
+    }
+    return recovered;
+  }
+
   async getStateWithBranding(interviewId: string): Promise<InterviewState | null> {
     const state = await this.getState(interviewId);
     if (!state) return null;
@@ -137,32 +179,40 @@ export class InterviewSessionService {
     return enriched;
   }
 
-  /**
-   * Update session state in Redis (e.g. after each turn). TTL is refreshed.
-   */
-  async setState(interviewId: string, state: InterviewState): Promise<void> {
+  async setState(
+    interviewId: string,
+    state: InterviewState,
+    opts?: { skipBackupSchedule?: boolean }
+  ): Promise<void> {
     const redis = getRedis();
-    await redis.setex(
-      sessionKey(interviewId),
-      SESSION_TTL_SECONDS,
-      JSON.stringify(state)
-    );
+    await redis.setex(sessionKey(interviewId), SESSION_TTL_SECONDS, JSON.stringify(state));
+    if (!opts?.skipBackupSchedule) {
+      sessionPersistenceService.scheduleBackup(interviewId, state);
+    }
   }
 
-  /**
-   * Append a turn and optionally update phase/topicCoverage/difficulty.
-   * Used by the conversation flow after each Q&A pair.
-   */
   async appendTurn(
     interviewId: string,
     turn: Turn,
-    updates: Partial<Pick<InterviewState, 'phase' | 'topicCoverage' | 'currentDifficulty' | 'approximateTokens'>> = {}
+    updates: Partial<
+      Pick<InterviewState, 'phase' | 'topicCoverage' | 'currentDifficulty' | 'approximateTokens'>
+    > = {}
   ): Promise<InterviewState | null> {
     const state = await this.getState(interviewId);
     if (!state) return null;
 
     state.turns.push(turn);
-    if (updates.phase !== undefined) state.phase = updates.phase;
+
+    if (updates.phase !== undefined && updates.phase !== state.phase) {
+      const next = phaseTransitionService.applyPhaseChange(state, updates.phase);
+      state.phase = next.phase;
+      state.phaseStartedAt = next.phaseStartedAt;
+      state.phaseQuestionCount = next.phaseQuestionCount;
+      void interviewSessionRecordRepository.updatePhase(interviewId, updates.phase);
+    } else if (turn.role === 'ai' && !turn.isIntro) {
+      state.phaseQuestionCount = (state.phaseQuestionCount ?? 0) + 1;
+    }
+
     if (updates.topicCoverage !== undefined) {
       state.topicCoverage = { ...(state.topicCoverage ?? {}), ...updates.topicCoverage };
     }
@@ -170,13 +220,35 @@ export class InterviewSessionService {
     if (updates.approximateTokens !== undefined) state.approximateTokens = updates.approximateTokens;
 
     await this.setState(interviewId, state);
+    void interviewSessionRecordRepository.touchActivity(interviewId);
     return state;
   }
 
-  /**
-   * Update a specific turn's avatarVideo (e.g. after async avatar generation).
-   * Used by the avatar queue worker to attach the video URL when generation completes.
-   */
+  /** Persist candidate response to DB and link turn.responseId */
+  async persistCandidateResponse(input: PersistCandidateResponseInput): Promise<string> {
+    const record = await interviewResponseRepository.create({
+      interviewId: input.interviewId,
+      candidateId: input.candidateId,
+      turnId: input.turn.id,
+      questionId: input.questionId,
+      answerText: input.turn.content,
+      codeContent: input.codeContent,
+      explanationText: input.explanationText,
+      codeLanguage: input.codeLanguage,
+      evaluation: input.evaluation,
+      evaluationStatus: input.evaluation.status ?? 'pending',
+    });
+
+    const state = await this.getState(input.interviewId);
+    if (state) {
+      const turn = state.turns.find((t) => t.id === input.turn.id);
+      if (turn) turn.responseId = record.id;
+      await this.setState(input.interviewId, state);
+    }
+
+    return record.id;
+  }
+
   async updateTurnAvatarVideo(interviewId: string, turnId: string, videoUrl: string): Promise<boolean> {
     const state = await this.getState(interviewId);
     if (!state) return false;
@@ -187,7 +259,6 @@ export class InterviewSessionService {
     return true;
   }
 
-  /** Patch evaluation on a candidate turn after async scoring completes. */
   async updateTurnEvaluation(
     interviewId: string,
     turnId: string,
@@ -199,15 +270,22 @@ export class InterviewSessionService {
     if (!turn || turn.role !== 'candidate') return false;
     turn.evaluation = evaluation;
     await this.setState(interviewId, state);
+
+    if (turn.responseId) {
+      await interviewResponseRepository.updateEvaluation(
+        turn.responseId,
+        evaluation,
+        evaluation.status ?? 'completed'
+      );
+    }
     return true;
   }
 
-  /**
-   * End the interview: persist end time in DB, optionally store final report,
-   * and clear or retain Redis state (we retain for a while for report generation).
-   */
-  async end(interviewId: string, report?: InterviewReport): Promise<boolean> {
-    const state = await this.getState(interviewId);
+  async end(
+    interviewId: string,
+    report?: InterviewReport,
+    reportStatus: ReportStatus = 'finalized'
+  ): Promise<boolean> {
     const now = new Date().toISOString();
 
     await query(
@@ -216,46 +294,32 @@ export class InterviewSessionService {
     );
 
     if (report) {
-      const reportId = uuidv4();
-      await query(
-        `INSERT INTO reports (
-          id, interview_id, overall_score, max_score, recommendation, summary,
-          red_flags, strengths, improvements, competencies, question_answer_summary
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        ON CONFLICT (interview_id) DO UPDATE SET
-          overall_score = EXCLUDED.overall_score,
-          max_score = EXCLUDED.max_score,
-          recommendation = EXCLUDED.recommendation,
-          summary = EXCLUDED.summary,
-          red_flags = EXCLUDED.red_flags,
-          strengths = EXCLUDED.strengths,
-          improvements = EXCLUDED.improvements,
-          competencies = EXCLUDED.competencies,
-          question_answer_summary = EXCLUDED.question_answer_summary`,
-        [
-          reportId,
-          interviewId,
-          report.overallScore,
-          report.maxScore,
-          report.recommendation,
-          report.summary,
-          JSON.stringify(report.redFlags),
-          JSON.stringify(report.strengths),
-          JSON.stringify(report.improvements),
-          JSON.stringify(report.competencies),
-          JSON.stringify(report.questionAnswerSummary),
-        ]
+      await reportFinalizationService.persistReport(
+        interviewId,
+        report,
+        report.reportStatus ?? reportStatus,
+        'interview_end'
       );
     }
 
+    await interviewSessionRecordRepository.markCompleted(interviewId);
+    logger.info('Interview session ended', { interviewId, hasReport: Boolean(report) });
     return true;
   }
 
-  /**
-   * Get list of phases in order (for strategy engine).
-   */
   getPhaseOrder(): InterviewPhase[] {
     return [...DEFAULT_PHASE_ORDER];
+  }
+
+  /** Re-issue session token for resumed interviews */
+  async reissueSessionToken(interviewId: string, candidateId: string): Promise<string> {
+    const token = issueInterviewSessionToken(interviewId, candidateId);
+    await interviewSessionRecordRepository.upsertActiveSession({
+      interviewId,
+      candidateId,
+      sessionTokenHash: hashSessionToken(token),
+    });
+    return token;
   }
 }
 

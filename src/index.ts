@@ -110,6 +110,13 @@ async function initializeServices(io: SocketIOServer): Promise<void> {
     // Queue optional
   }
 
+  try {
+    const { startEvaluationWorker } = await import('./queues/evaluationQueue');
+    startEvaluationWorker();
+  } catch (_) {
+    // Queue optional
+  }
+
   logger.info('All services initialized');
 }
 

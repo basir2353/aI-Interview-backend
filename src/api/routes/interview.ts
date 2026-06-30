@@ -8,10 +8,38 @@ import { Router, Request, Response } from 'express';
 import { body, param } from 'express-validator';
 import { interviewSessionService } from '../../services/interview/InterviewSessionService';
 import { aiInterviewerOrchestrator } from '../../services/interview/AIInterviewerOrchestrator';
+import { reportFinalizationService } from '../../services/interview/ReportFinalizationService';
 import { query } from '../../db/client';
 import { validate } from '../middleware/validate';
+import {
+  interviewSessionAuthMiddleware,
+  assertCandidateAccess,
+  getClientIp,
+} from '../middleware/interviewSessionAuth';
+import { interviewAnswerRateLimit } from '../middleware/rateLimit';
+import { buildErrorResponse, ERROR_MESSAGES } from '../../types/errors';
+import { logger } from '../../config/logger';
 
 const router = Router();
+
+function mapFailureReason(reason: string | undefined): ReturnType<typeof buildErrorResponse> {
+  switch (reason) {
+    case 'session_not_found':
+      return buildErrorResponse('SESSION_NOT_FOUND');
+    case 'echo_detected':
+      return buildErrorResponse('ECHO_DETECTED');
+    case 'invalid_transcript':
+      return buildErrorResponse('INVALID_TRANSCRIPT');
+    case 'no_pending_question':
+      return buildErrorResponse('NO_PENDING_QUESTION');
+    case 'code_validation_failed':
+      return buildErrorResponse('CODE_VALIDATION_FAILED');
+    case 'forbidden':
+      return buildErrorResponse('FORBIDDEN');
+    default:
+      return buildErrorResponse('INTERNAL_ERROR');
+  }
+}
 
 /** POST /interview/start - Create and start a new interview session */
 router.post(
@@ -43,14 +71,20 @@ router.post(
         ensuredCandidateId = inserted.rows[0].id;
       }
 
-      const result = await interviewSessionService.start({ candidateId: ensuredCandidateId, role, positionId });
+      const result = await interviewSessionService.start({
+        candidateId: ensuredCandidateId,
+        role,
+        positionId,
+        clientIp: getClientIp(req),
+      });
       res.status(201).json({
         interviewId: result.interviewId,
         state: result.state,
+        sessionToken: result.sessionToken,
       });
     } catch (e) {
-      console.error('Interview start error', e);
-      res.status(500).json({ error: 'Failed to start interview' });
+      logger.error('Interview start error', { error: e instanceof Error ? e.message : String(e) });
+      res.status(500).json(buildErrorResponse('INTERNAL_ERROR'));
     }
   }
 );
@@ -60,7 +94,7 @@ router.post('/:id/begin-live', validate([param('id').isUUID()]), async (req: Req
   try {
     const result = await aiInterviewerOrchestrator.ensureWelcomeDelivered(req.params.id);
     if (!result.success || !result.state) {
-      return res.status(404).json({ error: 'Interview not found or session expired' });
+      return res.status(404).json(buildErrorResponse('SESSION_NOT_FOUND'));
     }
     res.json({
       state: result.state,
@@ -69,47 +103,53 @@ router.post('/:id/begin-live', validate([param('id').isUUID()]), async (req: Req
       avatarVideo: result.avatarVideo,
     });
   } catch (e) {
-    console.error('Begin live error', e);
-    res.status(500).json({ error: 'Failed to begin live interview' });
+    logger.error('Begin live error', { error: e instanceof Error ? e.message : String(e) });
+    res.status(500).json(buildErrorResponse('INTERNAL_ERROR'));
   }
 });
 
 /** POST /interview/:id/answer - Submit candidate answer and get next AI reply */
 router.post(
   '/:id/answer',
-  validate([param('id').isUUID(), body('answerText').isString().notEmpty().trim()]),
+  interviewSessionAuthMiddleware,
+  interviewAnswerRateLimit,
+  validate([
+    param('id').isUUID(),
+    body('answerText').isString().notEmpty().trim(),
+    body('codeContent').optional().isString(),
+    body('explanationText').optional().isString(),
+    body('codeLanguage').optional().isString(),
+  ]),
   async (req: Request, res: Response) => {
+    const interviewId = req.params.id;
     try {
-      const interviewId = req.params.id;
-      const { answerText } = req.body;
+      const state = await interviewSessionService.getStateWithBranding(interviewId);
+      if (!state) {
+        return res.status(404).json(buildErrorResponse('SESSION_NOT_FOUND'));
+      }
+
+      const allowed = await assertCandidateAccess(req, state.candidateId);
+      if (!allowed) {
+        return res.status(403).json(buildErrorResponse('FORBIDDEN'));
+      }
+
+      const { answerText, codeContent, explanationText, codeLanguage } = req.body;
       const result = await aiInterviewerOrchestrator.submitAnswer({
         interviewId,
         answerText: String(answerText).trim(),
+        codeContent: codeContent != null ? String(codeContent) : undefined,
+        explanationText: explanationText != null ? String(explanationText) : undefined,
+        codeLanguage: codeLanguage != null ? String(codeLanguage) : undefined,
+        clientIp: getClientIp(req),
+        userAgent: req.headers['user-agent'],
       });
+
       if (!result.success) {
-        if (result.failureReason === 'session_not_found') {
-          return res.status(404).json({
-            error: 'Interview session not found or expired. Please refresh the page or use your original link to start again.',
-            code: 'SESSION_NOT_FOUND',
-          });
-        }
-        if (result.failureReason === 'echo_detected') {
-          return res.status(400).json({
-            error: 'That sounded like the interviewer, not your answer. Please wait for the question to finish, then speak clearly.',
-            code: 'ECHO_DETECTED',
-          });
-        }
-        if (result.failureReason === 'invalid_transcript') {
-          return res.status(400).json({
-            error: 'No clear answer detected. Please speak for at least a few seconds, then try again.',
-            code: 'INVALID_TRANSCRIPT',
-          });
-        }
-        return res.status(400).json({
-          error: 'No question is currently waiting for an answer. You may have already submitted, or the session is out of sync. Try refreshing the page.',
-          code: 'NO_PENDING_QUESTION',
-        });
+        const errBody = mapFailureReason(result.failureReason);
+        const status = ERROR_MESSAGES[errBody.code].status;
+        return res.status(status).json(errBody);
       }
+
       res.json({
         state: result.state,
         nextReply: result.nextReply,
@@ -119,9 +159,9 @@ router.post(
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      console.error('Submit answer error', message, e);
+      logger.error('Submit answer error', { interviewId, error: message });
       res.status(500).json({
-        error: 'Failed to submit answer',
+        ...buildErrorResponse('INTERNAL_ERROR'),
         ...(process.env.NODE_ENV !== 'production' ? { details: message } : {}),
       });
     }
@@ -133,34 +173,54 @@ router.get('/:id/state', validate([param('id').isUUID()]), async (req: Request, 
   try {
     const state = await interviewSessionService.getStateWithBranding(req.params.id);
     if (!state) {
-      return res.status(404).json({ error: 'Interview not found or session expired' });
+      return res.status(404).json(buildErrorResponse('SESSION_NOT_FOUND'));
     }
     res.json(state);
   } catch (e) {
-    console.error('Get state error', e);
-    res.status(500).json({ error: 'Failed to get state' });
+    logger.error('Get state error', { error: e instanceof Error ? e.message : String(e) });
+    res.status(500).json(buildErrorResponse('INTERNAL_ERROR'));
   }
 });
 
-/** POST /interview/:id/end - End interview and optionally generate report */
-router.post('/:id/end', validate([param('id').isUUID()]), async (req: Request, res: Response) => {
-  try {
-    const interviewId = req.params.id;
-    const state = await interviewSessionService.getState(interviewId);
-    let report = null;
-    if (state) {
-      report = (await aiInterviewerOrchestrator.getReport(interviewId)) ?? undefined;
+/** POST /interview/:id/end - End interview and generate finalized report */
+router.post(
+  '/:id/end',
+  interviewSessionAuthMiddleware,
+  validate([param('id').isUUID()]),
+  async (req: Request, res: Response) => {
+    try {
+      const interviewId = req.params.id;
+      const state = await interviewSessionService.getState(interviewId);
+
+      if (state) {
+        const allowed = await assertCandidateAccess(req, state.candidateId);
+        if (!allowed) {
+          return res.status(403).json(buildErrorResponse('FORBIDDEN'));
+        }
+      }
+
+      const finalized = await reportFinalizationService.finalizeReport(interviewId);
+      const report = finalized?.report ?? null;
+
+      if (state) {
+        await interviewSessionService.end(interviewId, report ?? undefined, finalized?.reportStatus ?? 'draft');
+      }
+
+      await query(
+        `UPDATE scheduled_interviews SET status = 'completed', updated_at = NOW() WHERE interview_id = $1`,
+        [interviewId]
+      );
+
+      if (!report && !state) {
+        return res.status(404).json(buildErrorResponse('SESSION_NOT_FOUND'));
+      }
+
+      res.json({ ended: true, report, reportStatus: finalized?.reportStatus ?? 'draft' });
+    } catch (e) {
+      logger.error('End interview error', { error: e instanceof Error ? e.message : String(e) });
+      res.status(500).json(buildErrorResponse('INTERNAL_ERROR'));
     }
-    await interviewSessionService.end(interviewId, report ?? undefined);
-    await query(
-      `UPDATE scheduled_interviews SET status = 'completed', updated_at = NOW() WHERE interview_id = $1`,
-      [interviewId]
-    );
-    res.json({ ended: true, report });
-  } catch (e) {
-    console.error('End interview error', e);
-    res.status(500).json({ error: 'Failed to end interview' });
   }
-});
+);
 
 export const interviewRoutes = router;

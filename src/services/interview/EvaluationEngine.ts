@@ -21,7 +21,7 @@ export interface EvaluateAnswerInput {
 export class EvaluationEngine {
   /** Instant placeholder while full scoring runs in the background during live interviews. */
   placeholderEvaluation(competencyIds: string[]): AnswerEvaluation {
-    return this.neutralEvaluation(competencyIds);
+    return { ...this.neutralEvaluation(competencyIds), status: 'pending' };
   }
 
   async evaluate(input: EvaluateAnswerInput): Promise<AnswerEvaluation> {
@@ -44,6 +44,7 @@ export class EvaluationEngine {
       return {
         ...parsed,
         normalizedScore: parsed.score / MAX_SCORE,
+        status: 'completed',
       };
     } catch (err) {
       console.error('EvaluationEngine.evaluate failed (using neutral score):', err);
@@ -62,6 +63,7 @@ export class EvaluationEngine {
       redFlags: [],
       feedbackSnippet: 'Answer recorded.',
       normalizedScore: 0.6,
+      status: 'completed',
     };
   }
 

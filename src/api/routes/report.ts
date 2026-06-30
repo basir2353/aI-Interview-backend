@@ -23,6 +23,7 @@ interface ReportRow {
   improvements: unknown;
   competencies: unknown;
   question_answer_summary: unknown;
+  report_status?: string;
 }
 
 router.get('/:interviewId', validate([param('interviewId').isUUID()]), async (req: Request, res: Response) => {
@@ -32,7 +33,8 @@ router.get('/:interviewId', validate([param('interviewId').isUUID()]), async (re
     if (!report) {
       const { rows } = await query<ReportRow>(
         `SELECT interview_id, overall_score, max_score, recommendation, summary,
-                red_flags, strengths, improvements, competencies, question_answer_summary
+                red_flags, strengths, improvements, competencies, question_answer_summary,
+                report_status
          FROM reports WHERE interview_id = $1`,
         [interviewId]
       );
@@ -55,6 +57,7 @@ router.get('/:interviewId', validate([param('interviewId').isUUID()]), async (re
         strengths: (r.strengths as string[]) ?? [],
         improvements: (r.improvements as string[]) ?? [],
         questionAnswerSummary: (r.question_answer_summary as InterviewReport['questionAnswerSummary']) ?? [],
+        reportStatus: (r.report_status as InterviewReport['reportStatus']) ?? 'finalized',
       };
     }
     res.json(report);

@@ -197,4 +197,14 @@ export const config = {
       '',
     resendWebhookSecret: process.env.RESEND_WEBHOOK_SECRET || '',
   },
+
+  interview: {
+    sessionTokenExpiresIn: process.env.INTERVIEW_SESSION_TOKEN_EXPIRES_IN || '24h',
+    /** Set INTERVIEW_AUTH_REQUIRED=false only for local debugging */
+    authRequired: process.env.INTERVIEW_AUTH_REQUIRED !== 'false',
+    answerRateLimitPerMinute: parseInt(process.env.INTERVIEW_ANSWER_RATE_LIMIT || '5', 10),
+    sessionBackupIntervalMs: parseInt(process.env.SESSION_BACKUP_INTERVAL_MS || '30000', 10),
+    evaluationWaitTimeoutMs: parseInt(process.env.EVALUATION_WAIT_TIMEOUT_MS || '90000', 10),
+    evaluationPollIntervalMs: parseInt(process.env.EVALUATION_POLL_INTERVAL_MS || '2000', 10),
+  },
 } as const;

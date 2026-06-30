@@ -26,6 +26,8 @@ export interface CandidateInfo {
   positionId?: string;
 }
 
+export type EvaluationStatus = 'pending' | 'completed';
+
 export interface Turn {
   id: string;
   role: 'ai' | 'candidate';
@@ -33,6 +35,8 @@ export interface Turn {
   timestamp: string;
   /** For AI turns: question id if applicable */
   questionId?: string;
+  /** For candidate turns: persisted row in interview_responses */
+  responseId?: string;
   /** For candidate turns: evaluation result when available */
   evaluation?: AnswerEvaluation;
   /** For AI turns: when question is a coding question, show code editor with this */
@@ -56,6 +60,9 @@ export interface AnswerEvaluation {
   feedbackSnippet: string;
   /** Normalized 0-1 for aggregation */
   normalizedScore: number;
+  status?: EvaluationStatus;
+  codeExecutionOutput?: string;
+  codeSyntaxValid?: boolean;
 }
 
 export interface InterviewState {
@@ -106,6 +113,10 @@ export interface InterviewState {
   durationMinutes?: number;
   /** Token budget used (approximate) for context window management */
   approximateTokens: number;
+  /** When the current phase started (for duration tracking) */
+  phaseStartedAt?: string;
+  /** Questions asked in the current phase */
+  phaseQuestionCount?: number;
 }
 
 export interface ReportCompetency {
@@ -115,6 +126,8 @@ export interface ReportCompetency {
   maxScore: number;
   evidence: string[];
 }
+
+export type ReportStatus = 'draft' | 'finalized';
 
 export interface InterviewReport {
   interviewId: string;
@@ -132,6 +145,33 @@ export interface InterviewReport {
   improvements: string[];
   /** Full Q&A for recruiter review */
   questionAnswerSummary: { question: string; answer: string; score: number }[];
+  reportStatus?: ReportStatus;
+}
+
+export interface InterviewResponseRecord {
+  id: string;
+  interviewId: string;
+  candidateId: string;
+  turnId: string;
+  questionId?: string | null;
+  answerText: string;
+  codeContent?: string | null;
+  explanationText?: string | null;
+  codeLanguage?: string | null;
+  evaluationData: AnswerEvaluation | Record<string, unknown>;
+  evaluationStatus: EvaluationStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ParsedCodeAnswer {
+  codeContent: string | null;
+  explanationText: string;
+  codeLanguage: string | null;
+  combinedText: string;
+  syntaxValid: boolean;
+  syntaxError?: string;
+  executionOutput?: string;
 }
 
 export interface QuestionTemplate {

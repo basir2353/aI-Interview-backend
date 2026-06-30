@@ -24,6 +24,11 @@ import { scoringReportService } from './ScoringReportService';
 import { avatarService } from '../avatar/avatar.service';
 import { isLikelyEchoAnswer } from './echoGuard';
 import { isInvalidCandidateTranscript } from './sttGuard';
+import { codeAnswerService } from './CodeAnswerService';
+import { enqueueEvaluation } from '../../queues/evaluationQueue';
+import { reportFinalizationService } from './ReportFinalizationService';
+import { interviewSessionRecordRepository } from '../../repositories/InterviewSessionRecordRepository';
+import { logger } from '../../config/logger';
 import type { InterviewState, InterviewReport } from '../../types';
 
 const LLM_INTERVIEW_TIMEOUT_MS = 35000;
@@ -31,9 +36,20 @@ const LLM_INTERVIEW_TIMEOUT_MS = 35000;
 export interface SubmitAnswerInput {
   interviewId: string;
   answerText: string;
+  codeContent?: string;
+  explanationText?: string;
+  codeLanguage?: string;
+  clientIp?: string;
+  userAgent?: string;
 }
 
-export type SubmitAnswerFailureReason = 'session_not_found' | 'no_pending_question' | 'echo_detected' | 'invalid_transcript';
+export type SubmitAnswerFailureReason =
+  | 'session_not_found'
+  | 'no_pending_question'
+  | 'echo_detected'
+  | 'invalid_transcript'
+  | 'code_validation_failed'
+  | 'forbidden';
 
 export interface SubmitAnswerResult {
   success: boolean;
@@ -152,6 +168,7 @@ export class AIInterviewerOrchestrator {
    * question, and return next AI reply. If interview is at end, generate report.
    */
   async submitAnswer(input: SubmitAnswerInput): Promise<SubmitAnswerResult> {
+    const started = Date.now();
     const state = await interviewSessionService.getStateWithBranding(input.interviewId);
     if (!state) {
       return { success: false, state: null, failureReason: 'session_not_found' };
@@ -159,23 +176,68 @@ export class AIInterviewerOrchestrator {
 
     const lastTurn = state.turns.length > 0 ? state.turns[state.turns.length - 1] : null;
     if (!lastTurn || lastTurn.role !== 'ai' || lastTurn.isIntro) {
+      await interviewSessionRecordRepository.logAnswerSubmission({
+        interviewId: input.interviewId,
+        clientIp: input.clientIp,
+        userAgent: input.userAgent,
+        success: false,
+        errorCode: 'NO_PENDING_QUESTION',
+      });
       return { success: false, state: null, failureReason: 'no_pending_question' };
     }
 
     const lastAiTurn = [...state.turns].reverse().find((t) => t.role === 'ai' && !t.isIntro);
     const lastQuestionText = lastAiTurn?.content ?? '';
     const lastQuestionId = lastAiTurn?.questionId;
+    const isCoding = lastAiTurn?.isCodingQuestion ?? false;
+
+    let answerText = input.answerText.trim();
+    let codeContent = input.codeContent ?? null;
+    let explanationText = input.explanationText ?? null;
+    let codeLanguage = input.codeLanguage ?? lastAiTurn?.codingLanguage ?? null;
+
+    if (isCoding || codeContent) {
+      const parsed = codeAnswerService.parseAnswer(answerText, codeLanguage);
+      codeContent = input.codeContent ?? parsed.codeContent;
+      explanationText = input.explanationText ?? parsed.explanationText;
+      codeLanguage = parsed.codeLanguage ?? codeLanguage;
+      answerText = codeAnswerService.formatForSubmission(parsed);
+      if (!parsed.syntaxValid) {
+        await interviewSessionRecordRepository.logAnswerSubmission({
+          interviewId: input.interviewId,
+          clientIp: input.clientIp,
+          userAgent: input.userAgent,
+          success: false,
+          errorCode: 'CODE_VALIDATION_FAILED',
+        });
+        return { success: false, state, failureReason: 'code_validation_failed' };
+      }
+    }
 
     const interviewerTexts = state.turns
       .filter((t) => t.role === 'ai')
       .map((t) => t.content ?? '')
       .filter(Boolean);
 
-    if (isLikelyEchoAnswer(input.answerText, interviewerTexts, state.interviewLanguage)) {
+    if (isLikelyEchoAnswer(answerText, interviewerTexts, state.interviewLanguage)) {
+      await interviewSessionRecordRepository.logAnswerSubmission({
+        interviewId: input.interviewId,
+        clientIp: input.clientIp,
+        userAgent: input.userAgent,
+        success: false,
+        errorCode: 'ECHO_DETECTED',
+      });
       return { success: false, state, failureReason: 'echo_detected' };
     }
 
-    if (isInvalidCandidateTranscript(input.answerText, normalizeInterviewLanguage(state.interviewLanguage))) {
+    if (isInvalidCandidateTranscript(answerText, normalizeInterviewLanguage(state.interviewLanguage))) {
+      await interviewSessionRecordRepository.logAnswerSubmission({
+        interviewId: input.interviewId,
+        clientIp: input.clientIp,
+        userAgent: input.userAgent,
+        success: false,
+        errorCode: 'INVALID_TRANSCRIPT',
+      });
       return { success: false, state, failureReason: 'invalid_transcript' };
     }
 
@@ -183,32 +245,59 @@ export class AIInterviewerOrchestrator {
       ? questionStrategyEngine.getCompetencyIdsForQuestionId(lastQuestionId)
       : ['communication'];
 
-    // Live path: do not block the next question on a second LLM scoring call.
     const evaluation = evaluationEngine.placeholderEvaluation(
       competencyIds.length ? competencyIds : ['communication']
     );
 
-    const candidateTurn = conversationManager.createTurn('candidate', input.answerText, {
+    const candidateTurn = conversationManager.createTurn('candidate', answerText, {
       evaluation,
     });
+
     await interviewSessionService.appendTurn(input.interviewId, candidateTurn, {
       topicCoverage: lastQuestionId ? { [lastQuestionId]: true } : undefined,
     });
 
-    void evaluationEngine
-      .evaluate({
-        question: lastQuestionText,
-        answer: input.answerText,
-        competencyIds: competencyIds.length ? competencyIds : ['communication'],
-        interviewLanguage: state.interviewLanguage,
-      })
-      .then((full) => interviewSessionService.updateTurnEvaluation(input.interviewId, candidateTurn.id, full))
-      .catch((err) => console.error('Background answer evaluation failed:', err));
+    const responseId = await interviewSessionService.persistCandidateResponse({
+      interviewId: input.interviewId,
+      candidateId: state.candidateId,
+      turn: candidateTurn,
+      questionId: lastQuestionId,
+      codeContent,
+      explanationText,
+      codeLanguage,
+      evaluation,
+    });
+
+    void enqueueEvaluation({
+      interviewId: input.interviewId,
+      turnId: candidateTurn.id,
+      responseId,
+      question: lastQuestionText,
+      answer: answerText,
+      competencyIds: competencyIds.length ? competencyIds : ['communication'],
+      interviewLanguage: state.interviewLanguage,
+    });
+
+    await interviewSessionRecordRepository.logAnswerSubmission({
+      interviewId: input.interviewId,
+      responseId,
+      clientIp: input.clientIp,
+      userAgent: input.userAgent,
+      success: true,
+    });
+
+    logger.info('Answer submitted', {
+      interviewId: input.interviewId,
+      responseId,
+      durationMs: Date.now() - started,
+    });
 
     const updatedState = await interviewSessionService.getStateWithBranding(input.interviewId);
-    if (!updatedState) return { success: true, state: null, evaluation: { score: evaluation.score, maxScore: evaluation.maxScore } };
+    if (!updatedState) {
+      return { success: true, state: null, evaluation: { score: evaluation.score, maxScore: evaluation.maxScore } };
+    }
 
-    const trimmedAnswer = input.answerText.trim();
+    const trimmedAnswer = answerText.trim();
     const requestFollowUp = trimmedAnswer.length < 50;
     const next = await questionStrategyEngine.getNextQuestion({
       state: updatedState,
@@ -216,8 +305,13 @@ export class AIInterviewerOrchestrator {
     });
 
     if (!next) {
-      const report = scoringReportService.buildReport({ ...updatedState, endedAt: new Date().toISOString() });
-      await interviewSessionService.end(input.interviewId, report);
+      const finalized = await reportFinalizationService.finalizeReport(input.interviewId);
+      const report = finalized?.report;
+      if (report) {
+        await interviewSessionService.end(input.interviewId, report, finalized.reportStatus);
+      } else {
+        await interviewSessionService.end(input.interviewId);
+      }
       return {
         success: true,
         state: updatedState,

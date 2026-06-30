@@ -63,6 +63,7 @@ export class ScoringReportService {
       strengths,
       improvements,
       questionAnswerSummary,
+      reportStatus: 'finalized',
     };
   }
 

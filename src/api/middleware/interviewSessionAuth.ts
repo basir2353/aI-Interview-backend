@@ -72,3 +72,39 @@ export function getClientIp(req: Request): string {
   if (typeof forwarded === 'string') return forwarded.split(',')[0].trim();
   return req.socket.remoteAddress ?? 'unknown';
 }
+
+/** Validates session token when present; does not reject missing auth (for begin-live / state). */
+export function optionalInterviewSessionAuthMiddleware(
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): void {
+  const interviewId = req.params.id;
+  if (!interviewId) {
+    next();
+    return;
+  }
+
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) {
+    next();
+    return;
+  }
+
+  const token = header.slice(7);
+  const sessionPayload = verifyInterviewSessionToken(token);
+  if (sessionPayload && sessionPayload.interviewId === interviewId) {
+    (req as Request & { interviewSession: InterviewSessionJwtPayload }).interviewSession = sessionPayload;
+  }
+
+  try {
+    const decoded = jwt.verify(token, config.jwt.secret) as JwtPayload;
+    if (decoded.type === 'candidate' && decoded.candidateId) {
+      (req as Request & { user: JwtPayload }).user = decoded;
+    }
+  } catch {
+    // ignore invalid optional token
+  }
+
+  next();
+}

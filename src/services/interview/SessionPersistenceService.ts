@@ -10,13 +10,14 @@ import { v4 as uuidv4 } from 'uuid';
 const pendingBackups = new Map<string, ReturnType<typeof setTimeout>>();
 
 export class SessionPersistenceService {
-  scheduleBackup(interviewId: string, state: InterviewState): void {
+  /** Debounce backup; always reads latest Redis state at flush time. */
+  scheduleBackup(interviewId: string): void {
     const existing = pendingBackups.get(interviewId);
     if (existing) clearTimeout(existing);
 
     const timer = setTimeout(() => {
       pendingBackups.delete(interviewId);
-      void this.persistBackup(interviewId, state).catch((err) => {
+      void this.persistLatestState(interviewId).catch((err) => {
         logger.error('Session backup failed', {
           interviewId,
           error: err instanceof Error ? err.message : String(err),
@@ -25,6 +26,13 @@ export class SessionPersistenceService {
     }, config.interview.sessionBackupIntervalMs);
 
     pendingBackups.set(interviewId, timer);
+  }
+
+  async persistLatestState(interviewId: string): Promise<void> {
+    const { interviewSessionService } = await import('./InterviewSessionService');
+    const state = await interviewSessionService.getState(interviewId);
+    if (!state) return;
+    await this.persistBackup(interviewId, state);
   }
 
   async persistBackup(interviewId: string, state: InterviewState): Promise<void> {

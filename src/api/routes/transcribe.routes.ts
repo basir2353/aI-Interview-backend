@@ -679,6 +679,27 @@ async function recordTranscription(input: {
   return id;
 }
 
+async function updateTranscriptionRecord(
+  id: string,
+  input: {
+    status: string;
+    transcript?: string;
+    errorMessage?: string;
+    attemptNumber?: number;
+  }
+): Promise<void> {
+  await query(
+    `UPDATE transcription_records
+     SET status = $2,
+         transcript = COALESCE($3, transcript),
+         error_message = COALESCE($4, error_message),
+         attempt_number = COALESCE($5, attempt_number),
+         completed_at = CASE WHEN $2 IN ('completed', 'failed', 'rejected') THEN NOW() ELSE completed_at END
+     WHERE id = $1`,
+    [id, input.status, input.transcript ?? null, input.errorMessage ?? null, input.attemptNumber ?? null]
+  );
+}
+
 router.post('/', upload.single('audio'), async (req: Request, res: Response) => {
   const file = (req as any).file as
     | { path: string; originalname?: string; mimetype?: string; size?: number }
@@ -728,13 +749,57 @@ router.post('/', upload.single('audio'), async (req: Request, res: Response) => 
     const ctx = resolveTranscribeRequest(body);
     logger.info('[transcribe] language context', ctx);
 
-    void recordTranscription({
+    const recordId = await recordTranscription({
       interviewId,
       storageKey,
       attemptNumber: 1,
       status: 'pending',
       clientIp,
     });
+
+    const finalizeRecord = (payload: Record<string, unknown>, statusCode: number) => {
+      void (async () => {
+        try {
+          if (statusCode >= 200 && statusCode < 300 && typeof payload.transcript === 'string') {
+            await updateTranscriptionRecord(recordId, {
+              status: 'completed',
+              transcript: payload.transcript,
+            });
+          } else {
+            const errMsg =
+              typeof payload.error === 'string'
+                ? payload.error
+                : typeof payload.code === 'string'
+                  ? payload.code
+                  : `HTTP ${statusCode}`;
+            await updateTranscriptionRecord(recordId, {
+              status: statusCode === 422 ? 'rejected' : 'failed',
+              errorMessage: errMsg,
+            });
+          }
+        } catch (recordErr) {
+          logger.warn('[transcribe] failed to finalize transcription record', {
+            recordId,
+            error: recordErr instanceof Error ? recordErr.message : String(recordErr),
+          });
+        }
+      })();
+    };
+
+    const originalJson = res.json.bind(res);
+    const originalStatus = res.status.bind(res);
+    let responseStatus = 200;
+    res.status = function (code: number) {
+      responseStatus = code;
+      return originalStatus(code);
+    } as typeof res.status;
+    res.json = function (body: unknown) {
+      finalizeRecord(
+        typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {},
+        responseStatus
+      );
+      return originalJson(body);
+    } as typeof res.json;
 
     return await transcribeWithRetry(normalizedPath, res, ctx, 3);
   } catch (e) {

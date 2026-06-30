@@ -3,6 +3,7 @@ import { EventEmitter } from 'events';
 import { logger } from '../config/logger';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 
 interface TranscriptionResult {
     text: string;
@@ -28,7 +29,7 @@ export class STTService extends EventEmitter {
         this.model = process.env.WHISPER_MODEL || 'base';
         this.language = process.env.WHISPER_LANGUAGE || 'auto';
         this.device = process.env.WHISPER_DEVICE || 'cpu';
-        this.tempAudioFile = path.join('/tmp', `whisper_${Date.now()}.wav`);
+        this.tempAudioFile = path.join(os.tmpdir(), `whisper_${Date.now()}.wav`);
     }
 
     /**

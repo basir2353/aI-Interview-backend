@@ -13,12 +13,14 @@ import { query } from '../../db/client';
 import { validate } from '../middleware/validate';
 import {
   interviewSessionAuthMiddleware,
+  optionalInterviewSessionAuthMiddleware,
   assertCandidateAccess,
   getClientIp,
 } from '../middleware/interviewSessionAuth';
 import { interviewAnswerRateLimit } from '../middleware/rateLimit';
 import { buildErrorResponse, ERROR_MESSAGES } from '../../types/errors';
 import { logger } from '../../config/logger';
+import { config } from '../../config';
 
 const router = Router();
 
@@ -90,9 +92,25 @@ router.post(
 );
 
 /** POST /interview/:id/begin-live - Deliver welcome intro + first question when candidate enters live room */
-router.post('/:id/begin-live', validate([param('id').isUUID()]), async (req: Request, res: Response) => {
+router.post(
+  '/:id/begin-live',
+  optionalInterviewSessionAuthMiddleware,
+  validate([param('id').isUUID()]),
+  async (req: Request, res: Response) => {
   try {
-    const result = await aiInterviewerOrchestrator.ensureWelcomeDelivered(req.params.id);
+    const interviewId = req.params.id;
+    const stateBefore = await interviewSessionService.getState(interviewId);
+    if (!stateBefore) {
+      return res.status(404).json(buildErrorResponse('SESSION_NOT_FOUND'));
+    }
+    if (config.interview.authRequired) {
+      const allowed = await assertCandidateAccess(req, stateBefore.candidateId);
+      if (!allowed) {
+        return res.status(403).json(buildErrorResponse('FORBIDDEN'));
+      }
+    }
+
+    const result = await aiInterviewerOrchestrator.ensureWelcomeDelivered(interviewId);
     if (!result.success || !result.state) {
       return res.status(404).json(buildErrorResponse('SESSION_NOT_FOUND'));
     }
@@ -169,11 +187,21 @@ router.post(
 );
 
 /** GET /interview/:id/state - Get current interview state (Redis) */
-router.get('/:id/state', validate([param('id').isUUID()]), async (req: Request, res: Response) => {
+router.get(
+  '/:id/state',
+  optionalInterviewSessionAuthMiddleware,
+  validate([param('id').isUUID()]),
+  async (req: Request, res: Response) => {
   try {
     const state = await interviewSessionService.getStateWithBranding(req.params.id);
     if (!state) {
       return res.status(404).json(buildErrorResponse('SESSION_NOT_FOUND'));
+    }
+    if (config.interview.authRequired) {
+      const allowed = await assertCandidateAccess(req, state.candidateId);
+      if (!allowed) {
+        return res.status(403).json(buildErrorResponse('FORBIDDEN'));
+      }
     }
     res.json(state);
   } catch (e) {

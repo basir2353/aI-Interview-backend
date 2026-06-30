@@ -7,7 +7,7 @@ import { promisify } from 'util';
 import * as path from 'path';
 import { logger } from '../config/logger';
 import { resolveWhisperModelPath } from '../constants/whisperConfig';
-import { spawnSync } from 'child_process';
+import { isWhisperBinAvailable } from '../utils/whisperBinCheck';
 
 const execFileAsync = promisify(execFile);
 
@@ -24,8 +24,7 @@ function ensureWhisperAvailable(): boolean {
   if (whisperAvailabilityChecked) return whisperAvailable;
   whisperAvailabilityChecked = true;
   try {
-    const check = spawnSync('which', [WHISPER_BIN], { stdio: 'ignore' });
-    whisperAvailable = check.status === 0;
+    whisperAvailable = isWhisperBinAvailable(WHISPER_BIN);
   } catch {
     whisperAvailable = false;
   }

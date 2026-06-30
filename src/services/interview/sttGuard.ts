@@ -92,14 +92,14 @@ export function isKnownSttHallucinationPhrase(transcript: string): boolean {
   return false;
 }
 
-/** Voice answers need real substance — blocks 2–3 word noise/hallucination clips. */
+/** Voice answers need real substance — blocks 1-word noise/hallucination clips. */
 export function isAnswerTooShort(transcript: string, interviewLanguage?: InterviewLanguageCode): boolean {
   const trimmed = transcript.trim();
   if (!trimmed) return true;
   const lang = interviewLanguage ? normalizeInterviewLanguage(interviewLanguage) : 'en-US';
   const words = trimmed.split(/\s+/).filter(Boolean);
-  if (words.length >= 3) return false;
-  const minChars = lang === 'en-US' ? 18 : 12;
+  if (words.length >= 2) return false;
+  const minChars = lang === 'en-US' ? 12 : 8;
   if (trimmed.length >= minChars) return false;
   return true;
 }

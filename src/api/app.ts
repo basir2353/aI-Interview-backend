@@ -35,7 +35,7 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     ts: new Date().toISOString(),
-    deployMarker: 'railway-test-20260630',
+    version: 'backend-optimized-v1',
   });
 });
 

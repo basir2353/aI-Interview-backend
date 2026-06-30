@@ -28,6 +28,7 @@ import { codeAnswerService } from './CodeAnswerService';
 import { enqueueEvaluation } from '../../queues/evaluationQueue';
 import { reportFinalizationService } from './ReportFinalizationService';
 import { interviewSessionRecordRepository } from '../../repositories/InterviewSessionRecordRepository';
+import { withInterviewSessionLock } from './sessionLock';
 import { logger } from '../../config/logger';
 import type { InterviewState, InterviewReport } from '../../types';
 
@@ -168,6 +169,10 @@ export class AIInterviewerOrchestrator {
    * question, and return next AI reply. If interview is at end, generate report.
    */
   async submitAnswer(input: SubmitAnswerInput): Promise<SubmitAnswerResult> {
+    return withInterviewSessionLock(input.interviewId, () => this.submitAnswerLocked(input));
+  }
+
+  private async submitAnswerLocked(input: SubmitAnswerInput): Promise<SubmitAnswerResult> {
     const started = Date.now();
     const state = await interviewSessionService.getStateWithBranding(input.interviewId);
     if (!state) {
@@ -183,7 +188,7 @@ export class AIInterviewerOrchestrator {
         success: false,
         errorCode: 'NO_PENDING_QUESTION',
       });
-      return { success: false, state: null, failureReason: 'no_pending_question' };
+      return { success: false, state, failureReason: 'no_pending_question' };
     }
 
     const lastAiTurn = [...state.turns].reverse().find((t) => t.role === 'ai' && !t.isIntro);
@@ -335,7 +340,10 @@ export class AIInterviewerOrchestrator {
         false
       );
     } catch (err) {
-      console.error('getNextReplyInternal failed (using fallback):', err);
+      logger.error('getNextReplyInternal failed (using fallback)', {
+        interviewId: input.interviewId,
+        error: err instanceof Error ? err.message : String(err),
+      });
       aiReply = next.questionText || 'Thank you for that. Can you tell me a bit more?';
     }
     let avatarVideo: string | undefined;
@@ -359,7 +367,12 @@ export class AIInterviewerOrchestrator {
             return interviewSessionService.updateTurnAvatarVideo(input.interviewId, aiTurn.id, result.videoUrl);
           }
         })
-        .catch((err) => console.error('Avatar generation failed (non-blocking):', err));
+        .catch((err) =>
+          logger.error('Avatar generation failed (non-blocking)', {
+            interviewId: input.interviewId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        );
     }
 
     const finalState = await interviewSessionService.getStateWithBranding(input.interviewId);
@@ -377,6 +390,10 @@ export class AIInterviewerOrchestrator {
    * Idempotent: safe to call once per session; repairs legacy sessions that only have a question turn.
    */
   async ensureWelcomeDelivered(interviewId: string): Promise<EnsureWelcomeDeliveredResult> {
+    return withInterviewSessionLock(interviewId, () => this.ensureWelcomeDeliveredLocked(interviewId));
+  }
+
+  private async ensureWelcomeDeliveredLocked(interviewId: string): Promise<EnsureWelcomeDeliveredResult> {
     const state = await interviewSessionService.getStateWithBranding(interviewId);
     if (!state) {
       return { success: false, state: null, reply: '' };
@@ -391,7 +408,7 @@ export class AIInterviewerOrchestrator {
         state.welcomeDelivered = true;
         await interviewSessionService.setState(interviewId, state);
       }
-      console.log('[Interview] Welcome already delivered', {
+      logger.info('[Interview] Welcome already delivered', {
         interviewId,
         introBeats: introTurns.length,
       });
@@ -406,7 +423,7 @@ export class AIInterviewerOrchestrator {
     }
 
     if (aiTurns.length === 0) {
-      console.log('[Interview] Delivering welcome on live entry', { interviewId });
+      logger.info('[Interview] Delivering welcome on live entry', { interviewId });
       return this.getNextReply({ interviewId });
     }
 
@@ -419,7 +436,7 @@ export class AIInterviewerOrchestrator {
       state.turns = [...introOnlyTurns, ...state.turns];
       state.welcomeDelivered = true;
       await interviewSessionService.setState(interviewId, state);
-      console.log('[Interview] Prepended missing welcome intro beats', {
+      logger.info('[Interview] Prepended missing welcome intro beats', {
         interviewId,
         introBeats: welcomeParts.length,
       });
@@ -486,7 +503,10 @@ export class AIInterviewerOrchestrator {
         isFirstQuestion
       );
     } catch (err) {
-      console.error('getNextReplyInternal failed (using fallback):', err);
+      logger.error('getNextReplyInternal failed (using fallback)', {
+        interviewId: input.interviewId,
+        error: err instanceof Error ? err.message : String(err),
+      });
       rawReply = isFirstQuestion
         ? this.buildResumeOpeningFallback(state)
         : next.questionText || 'Could you tell me more about that?';
@@ -508,7 +528,10 @@ export class AIInterviewerOrchestrator {
           questionAvatarVideo = avatarResult.videoUrl;
         }
       } catch (err) {
-        console.error('Avatar generation failed (non-blocking):', err);
+        logger.error('Avatar generation failed (non-blocking)', {
+          interviewId: input.interviewId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
       const questionTurn = conversationManager.createTurn('ai', questionText, {
         questionId: next.questionId,
@@ -529,7 +552,7 @@ export class AIInterviewerOrchestrator {
       }
 
       const updatedState = await interviewSessionService.getStateWithBranding(input.interviewId);
-      console.log('[Interview] Welcome delivered', {
+      logger.info('[Interview] Welcome delivered', {
         interviewId: input.interviewId,
         introBeats: welcomeParts.length,
         introPreview: welcomeParts[0]?.slice(0, 80),
@@ -553,7 +576,10 @@ export class AIInterviewerOrchestrator {
         avatarVideo = avatarResult.videoUrl;
       }
     } catch (err) {
-      console.error('Avatar generation failed (non-blocking):', err);
+      logger.error('Avatar generation failed (non-blocking)', {
+        interviewId: input.interviewId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     const aiTurn = conversationManager.createTurn('ai', reply, {
       questionId: next.questionId,

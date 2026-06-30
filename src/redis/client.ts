@@ -6,13 +6,16 @@
 import Redis from 'ioredis';
 import { config } from '../config';
 
-const KEY_PREFIX = 'ai_interview:';
+export const KEY_PREFIX = 'ai_interview:';
 
 /** Minimal interface used by InterviewSessionService */
 export type RedisLike = {
   get(key: string): Promise<string | null>;
   setex(key: string, seconds: number, value: string): Promise<string>;
   expire(key: string, seconds: number): Promise<number>;
+  /** SET key value EX ttl NX — returns 'OK' when acquired, null when key exists */
+  set(key: string, value: string, mode: 'EX', ttl: number, nx: 'NX'): Promise<string | null>;
+  del(key: string): Promise<number>;
 };
 
 function createMemoryStore(): RedisLike {
@@ -35,6 +38,16 @@ function createMemoryStore(): RedisLike {
       const entry = store.get(key);
       if (entry) entry.expiryTs = Date.now() + seconds * 1000;
       return 1;
+    },
+    async set(key: string, value: string, mode: 'EX', ttl: number, nx: 'NX'): Promise<string | null> {
+      if (mode !== 'EX' || nx !== 'NX') return null;
+      const existing = await this.get(key);
+      if (existing !== null) return null;
+      await this.setex(key, ttl, value);
+      return 'OK';
+    },
+    async del(key: string): Promise<number> {
+      return store.delete(key) ? 1 : 0;
     },
   };
 }
@@ -61,7 +74,15 @@ export function getRedis(): RedisLike {
       r.on('error', (err) => {
         console.error('Redis error', err);
       });
-      client = r as unknown as RedisLike;
+      const wrapped: RedisLike = {
+        get: (key) => r.get(key),
+        setex: (key, seconds, value) => r.setex(key, seconds, value),
+        expire: (key, seconds) => r.expire(key, seconds),
+        set: (key, value, mode, ttl, nx) =>
+          r.set(key, value, mode, ttl, nx) as Promise<string | null>,
+        del: (key) => r.del(key),
+      };
+      client = wrapped;
     }
   }
   return client;

@@ -29,6 +29,7 @@ import { phaseTransitionService } from './PhaseTransitionService';
 import { reportFinalizationService } from './ReportFinalizationService';
 import { issueInterviewSessionToken, hashSessionToken } from '../../utils/interviewSessionToken';
 import { logger } from '../../config/logger';
+import { withInterviewSessionLock } from './sessionLock';
 
 export interface StartInterviewInput {
   candidateId: string;
@@ -150,7 +151,7 @@ export class InterviewSessionService {
   async recoverFromBackup(interviewId: string): Promise<InterviewState | null> {
     const recovered = await sessionPersistenceService.recoverState(interviewId);
     if (recovered) {
-      await this.setState(interviewId, recovered, { skipBackupSchedule: true });
+      await this.writeState(interviewId, recovered, { skipBackupSchedule: true });
     }
     return recovered;
   }
@@ -184,10 +185,20 @@ export class InterviewSessionService {
     state: InterviewState,
     opts?: { skipBackupSchedule?: boolean }
   ): Promise<void> {
+    return withInterviewSessionLock(interviewId, async () => {
+      await this.writeState(interviewId, state, opts);
+    });
+  }
+
+  private async writeState(
+    interviewId: string,
+    state: InterviewState,
+    opts?: { skipBackupSchedule?: boolean }
+  ): Promise<void> {
     const redis = getRedis();
     await redis.setex(sessionKey(interviewId), SESSION_TTL_SECONDS, JSON.stringify(state));
     if (!opts?.skipBackupSchedule) {
-      sessionPersistenceService.scheduleBackup(interviewId, state);
+      sessionPersistenceService.scheduleBackup(interviewId);
     }
   }
 
@@ -198,65 +209,71 @@ export class InterviewSessionService {
       Pick<InterviewState, 'phase' | 'topicCoverage' | 'currentDifficulty' | 'approximateTokens'>
     > = {}
   ): Promise<InterviewState | null> {
-    const state = await this.getState(interviewId);
-    if (!state) return null;
+    return withInterviewSessionLock(interviewId, async () => {
+      const state = await this.getState(interviewId);
+      if (!state) return null;
 
-    state.turns.push(turn);
+      state.turns.push(turn);
 
-    if (updates.phase !== undefined && updates.phase !== state.phase) {
-      const next = phaseTransitionService.applyPhaseChange(state, updates.phase);
-      state.phase = next.phase;
-      state.phaseStartedAt = next.phaseStartedAt;
-      state.phaseQuestionCount = next.phaseQuestionCount;
-      void interviewSessionRecordRepository.updatePhase(interviewId, updates.phase);
-    } else if (turn.role === 'ai' && !turn.isIntro) {
-      state.phaseQuestionCount = (state.phaseQuestionCount ?? 0) + 1;
-    }
+      if (updates.phase !== undefined && updates.phase !== state.phase) {
+        const next = phaseTransitionService.applyPhaseChange(state, updates.phase);
+        state.phase = next.phase;
+        state.phaseStartedAt = next.phaseStartedAt;
+        state.phaseQuestionCount = next.phaseQuestionCount;
+        void interviewSessionRecordRepository.updatePhase(interviewId, updates.phase);
+      } else if (turn.role === 'ai' && !turn.isIntro) {
+        state.phaseQuestionCount = (state.phaseQuestionCount ?? 0) + 1;
+      }
 
-    if (updates.topicCoverage !== undefined) {
-      state.topicCoverage = { ...(state.topicCoverage ?? {}), ...updates.topicCoverage };
-    }
-    if (updates.currentDifficulty !== undefined) state.currentDifficulty = updates.currentDifficulty;
-    if (updates.approximateTokens !== undefined) state.approximateTokens = updates.approximateTokens;
+      if (updates.topicCoverage !== undefined) {
+        state.topicCoverage = { ...(state.topicCoverage ?? {}), ...updates.topicCoverage };
+      }
+      if (updates.currentDifficulty !== undefined) state.currentDifficulty = updates.currentDifficulty;
+      if (updates.approximateTokens !== undefined) state.approximateTokens = updates.approximateTokens;
 
-    await this.setState(interviewId, state);
-    void interviewSessionRecordRepository.touchActivity(interviewId);
-    return state;
+      await this.writeState(interviewId, state);
+      void interviewSessionRecordRepository.touchActivity(interviewId);
+      return state;
+    });
   }
 
   /** Persist candidate response to DB and link turn.responseId */
   async persistCandidateResponse(input: PersistCandidateResponseInput): Promise<string> {
-    const record = await interviewResponseRepository.create({
-      interviewId: input.interviewId,
-      candidateId: input.candidateId,
-      turnId: input.turn.id,
-      questionId: input.questionId,
-      answerText: input.turn.content,
-      codeContent: input.codeContent,
-      explanationText: input.explanationText,
-      codeLanguage: input.codeLanguage,
-      evaluation: input.evaluation,
-      evaluationStatus: input.evaluation.status ?? 'pending',
+    return withInterviewSessionLock(input.interviewId, async () => {
+      const record = await interviewResponseRepository.create({
+        interviewId: input.interviewId,
+        candidateId: input.candidateId,
+        turnId: input.turn.id,
+        questionId: input.questionId,
+        answerText: input.turn.content,
+        codeContent: input.codeContent,
+        explanationText: input.explanationText,
+        codeLanguage: input.codeLanguage,
+        evaluation: input.evaluation,
+        evaluationStatus: input.evaluation.status ?? 'pending',
+      });
+
+      const state = await this.getState(input.interviewId);
+      if (state) {
+        const turn = state.turns.find((t) => t.id === input.turn.id);
+        if (turn) turn.responseId = record.id;
+        await this.writeState(input.interviewId, state);
+      }
+
+      return record.id;
     });
-
-    const state = await this.getState(input.interviewId);
-    if (state) {
-      const turn = state.turns.find((t) => t.id === input.turn.id);
-      if (turn) turn.responseId = record.id;
-      await this.setState(input.interviewId, state);
-    }
-
-    return record.id;
   }
 
   async updateTurnAvatarVideo(interviewId: string, turnId: string, videoUrl: string): Promise<boolean> {
-    const state = await this.getState(interviewId);
-    if (!state) return false;
-    const turn = state.turns.find((t) => t.id === turnId);
-    if (!turn || turn.role !== 'ai') return false;
-    turn.avatarVideo = videoUrl;
-    await this.setState(interviewId, state);
-    return true;
+    return withInterviewSessionLock(interviewId, async () => {
+      const state = await this.getState(interviewId);
+      if (!state) return false;
+      const turn = state.turns.find((t) => t.id === turnId);
+      if (!turn || turn.role !== 'ai') return false;
+      turn.avatarVideo = videoUrl;
+      await this.writeState(interviewId, state);
+      return true;
+    });
   }
 
   async updateTurnEvaluation(
@@ -264,21 +281,23 @@ export class InterviewSessionService {
     turnId: string,
     evaluation: Turn['evaluation']
   ): Promise<boolean> {
-    const state = await this.getState(interviewId);
-    if (!state || !evaluation) return false;
-    const turn = state.turns.find((t) => t.id === turnId);
-    if (!turn || turn.role !== 'candidate') return false;
-    turn.evaluation = evaluation;
-    await this.setState(interviewId, state);
+    return withInterviewSessionLock(interviewId, async () => {
+      const state = await this.getState(interviewId);
+      if (!state || !evaluation) return false;
+      const turn = state.turns.find((t) => t.id === turnId);
+      if (!turn || turn.role !== 'candidate') return false;
+      turn.evaluation = evaluation;
+      await this.writeState(interviewId, state);
 
-    if (turn.responseId) {
-      await interviewResponseRepository.updateEvaluation(
-        turn.responseId,
-        evaluation,
-        evaluation.status ?? 'completed'
-      );
-    }
-    return true;
+      if (turn.responseId) {
+        await interviewResponseRepository.updateEvaluation(
+          turn.responseId,
+          evaluation,
+          evaluation.status ?? 'completed'
+        );
+      }
+      return true;
+    });
   }
 
   async end(

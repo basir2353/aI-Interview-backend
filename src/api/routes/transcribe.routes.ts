@@ -684,24 +684,31 @@ async function recordTranscription(input: {
   status: string;
   errorMessage?: string;
   clientIp?: string;
-}): Promise<string> {
+}): Promise<string | null> {
   const id = uuidv4();
-  await query(
-    `INSERT INTO transcription_records (
-      id, interview_id, audio_storage_key, transcript, attempt_number, status, error_message, client_ip, created_at, completed_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(), CASE WHEN $6 = 'completed' THEN NOW() ELSE NULL END)`,
-    [
-      id,
-      input.interviewId ?? null,
-      input.storageKey ?? null,
-      input.transcript ?? null,
-      input.attemptNumber,
-      input.status,
-      input.errorMessage ?? null,
-      input.clientIp ?? null,
-    ]
-  );
-  return id;
+  try {
+    await query(
+      `INSERT INTO transcription_records (
+        id, interview_id, audio_storage_key, transcript, attempt_number, status, error_message, client_ip, created_at, completed_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NULL)`,
+      [
+        id,
+        input.interviewId ?? null,
+        input.storageKey ?? null,
+        input.transcript ?? null,
+        input.attemptNumber,
+        input.status,
+        input.errorMessage ?? null,
+        input.clientIp ?? null,
+      ]
+    );
+    return id;
+  } catch (err) {
+    logger.warn('[transcribe] transcription audit insert failed (non-blocking)', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
 }
 
 async function updateTranscriptionRecord(
@@ -719,7 +726,7 @@ async function updateTranscriptionRecord(
          transcript = COALESCE($3, transcript),
          error_message = COALESCE($4, error_message),
          attempt_number = COALESCE($5, attempt_number),
-         completed_at = CASE WHEN $2 IN ('completed', 'failed', 'rejected') THEN NOW() ELSE completed_at END
+         completed_at = CASE WHEN $2::text IN ('completed', 'failed', 'rejected') THEN NOW() ELSE completed_at END
      WHERE id = $1`,
     [id, input.status, input.transcript ?? null, input.errorMessage ?? null, input.attemptNumber ?? null]
   );
@@ -785,6 +792,7 @@ router.post('/', upload.single('audio'), async (req: Request, res: Response) => 
     });
 
     const finalizeRecord = (payload: Record<string, unknown>, statusCode: number) => {
+      if (!recordId) return;
       void (async () => {
         try {
           if (statusCode >= 200 && statusCode < 300 && typeof payload.transcript === 'string') {

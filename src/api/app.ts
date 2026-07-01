@@ -13,8 +13,6 @@ import { adminRoutes } from './routes/admin';
 import { publicJoinRoutes } from './routes/publicJoin';
 import { aiRoutes } from './routes/ai';
 import { llmRoutes } from './routes/llm.routes';
-import { voiceInterviewRoutes } from './routes/voice-interview.routes';
-import { voiceLoopRoutes } from './routes/voiceLoop.routes';
 import { recruiterRoutes } from './routes/recruiter';
 import { transcribeRoutes } from './routes/transcribe.routes';
 import { publicJobsRoutes } from './routes/publicJobs';
@@ -114,8 +112,6 @@ app.use(`${config.apiPrefix}/candidate`, candidateAuthRoutes);
 app.use(`${config.apiPrefix}/community`, communityRoutes);
 app.use(`${config.apiPrefix}/ai`, aiRoutes);
 app.use(`${config.apiPrefix}/llm`, llmRoutes);
-app.use(`${config.apiPrefix}/voice-interview`, voiceInterviewRoutes);
-app.use(`${config.apiPrefix}/voice-loop`, voiceLoopRoutes);
 // Voice STT (multipart upload)
 app.use(`${config.apiPrefix}/transcribe`, transcribeRoutes);
 // Alias to satisfy clients expecting POST /api/transcribe

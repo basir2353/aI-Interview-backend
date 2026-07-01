@@ -147,6 +147,26 @@ export const config = {
     process.env.FRONTEND_URL ||
     (process.env.NODE_ENV === 'production' ? PRODUCTION_FRONTEND : 'http://localhost:3000'),
 
+  /** Origins allowed for browser direct calls (STT, etc.). */
+  corsOrigins: (() => {
+    const origins = new Set<string>();
+    const front = (
+      process.env.FRONTEND_URL ||
+      (process.env.NODE_ENV === 'production' ? PRODUCTION_FRONTEND : 'http://localhost:3000')
+    )
+      .trim()
+      .replace(/\/$/, '');
+    origins.add(front);
+    origins.add('http://localhost:3000');
+    if (process.env.CORS_ORIGINS) {
+      for (const o of process.env.CORS_ORIGINS.split(',')) {
+        const t = o.trim().replace(/\/$/, '');
+        if (t) origins.add(t);
+      }
+    }
+    return [...origins];
+  })(),
+
   /** Public backend URL for fetching uploaded files (resumes) when not on local disk. */
   publicUrl: (() => {
     const explicit = (process.env.BACKEND_URL || process.env.PUBLIC_BACKEND_URL || '').replace(/\/$/, '');

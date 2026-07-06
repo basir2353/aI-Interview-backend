@@ -67,6 +67,7 @@ router.post('/:id/begin-live', validate([param('id').isUUID()]), async (req: Req
       firstIntro: result.reply,
       alreadyDelivered: result.alreadyDelivered ?? false,
       avatarVideo: result.avatarVideo,
+      report: result.report,
     });
   } catch (e) {
     console.error('Begin live error', e);

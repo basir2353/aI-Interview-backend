@@ -66,6 +66,8 @@ export interface InterviewState {
   role: InterviewRole;
   phase: InterviewPhase;
   startedAt: string;
+  /** When the candidate entered the live interview room (timer starts here). */
+  liveStartedAt?: string;
   endedAt?: string;
   turns: Turn[];
   /** Tracks which topics have been covered for adaptive questioning */

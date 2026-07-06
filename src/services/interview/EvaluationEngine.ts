@@ -32,7 +32,7 @@ export class EvaluationEngine {
           { role: 'system', content: system },
           { role: 'user', content: userContent },
         ],
-        { temperature: 0.3, maxTokens: 256, timeoutMs: 45000 }
+        { temperature: 0.3, maxTokens: 192, timeoutMs: 45000 }
       );
 
       const parsed = this.parseEvaluationResponse(response.content, input.competencyIds);

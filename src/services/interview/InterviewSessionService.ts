@@ -14,6 +14,7 @@ import type { CodingInterviewModeId } from '../../constants/codingInterviewModes
 import { resolveBrandingForInterview, resolveScheduleBranding } from './ScheduleBrandingService';
 import { normalizeInterviewLanguage, DEFAULT_INTERVIEW_LANGUAGE } from '../../constants/interviewLanguage';
 import { parseCodingModeFromFocusAreas } from '../../constants/codingInterviewModes';
+import { resolveInterviewDurationMinutes } from '../../constants/interviewDuration';
 
 export interface StartInterviewInput {
   candidateId: string;
@@ -77,7 +78,7 @@ export class InterviewSessionService {
       preferredDifficulty: input.preferredDifficulty,
       customQuestions: input.customQuestions ?? [],
       focusAreas: input.focusAreas,
-      durationMinutes: input.durationMinutes,
+      durationMinutes: resolveInterviewDurationMinutes(input.durationMinutes),
       interviewerPersona: input.interviewerPersona,
       companyName: input.companyName,
       interviewLanguage: normalizeInterviewLanguage(input.interviewLanguage ?? DEFAULT_INTERVIEW_LANGUAGE),
@@ -203,7 +204,7 @@ export class InterviewSessionService {
       preferredDifficulty: schedule?.preferred_difficulty ?? undefined,
       customQuestions,
       focusAreas: schedule?.focus_areas?.trim() || undefined,
-      durationMinutes: schedule?.duration_minutes ?? undefined,
+      durationMinutes: resolveInterviewDurationMinutes(schedule?.duration_minutes ?? undefined),
       codingInterviewMode: parseCodingModeFromFocusAreas(schedule?.focus_areas),
       positionTitle,
       candidateDisplayName: schedule?.candidate_name?.trim() || undefined,
@@ -259,6 +260,15 @@ export class InterviewSessionService {
     );
   }
 
+  /** Mark when the candidate entered the live room — interview timer starts here. */
+  async markLiveStarted(interviewId: string): Promise<InterviewState | null> {
+    const state = await this.getState(interviewId);
+    if (!state || state.liveStartedAt) return state;
+    state.liveStartedAt = new Date().toISOString();
+    await this.setState(interviewId, state);
+    return state;
+  }
+
   /**
    * Append a turn and optionally update phase/topicCoverage/difficulty.
    * Used by the conversation flow after each Q&A pair.
@@ -293,6 +303,21 @@ export class InterviewSessionService {
     const turn = state.turns.find((t) => t.id === turnId);
     if (!turn || turn.role !== 'ai') return false;
     turn.avatarVideo = videoUrl;
+    await this.setState(interviewId, state);
+    return true;
+  }
+
+  /** Attach evaluation to a candidate turn after async scoring completes. */
+  async updateTurnEvaluation(
+    interviewId: string,
+    turnId: string,
+    evaluation: NonNullable<Turn['evaluation']>
+  ): Promise<boolean> {
+    const state = await this.getState(interviewId);
+    if (!state) return false;
+    const turn = state.turns.find((t) => t.id === turnId);
+    if (!turn || turn.role !== 'candidate') return false;
+    turn.evaluation = evaluation;
     await this.setState(interviewId, state);
     return true;
   }

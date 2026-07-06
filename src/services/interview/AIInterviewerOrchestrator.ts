@@ -22,7 +22,12 @@ import { questionStrategyEngine } from './QuestionStrategyEngine';
 import { evaluationEngine } from './EvaluationEngine';
 import { scoringReportService } from './ScoringReportService';
 import { avatarService } from '../avatar/avatar.service';
-import type { InterviewState, InterviewReport } from '../../types';
+import {
+  INTERVIEW_TIME_UP_MESSAGE,
+  isInterviewTimeExpired,
+  resolveInterviewDurationMinutes,
+} from '../../constants/interviewDuration';
+import type { InterviewState, InterviewReport, AnswerEvaluation } from '../../types';
 
 const LLM_INTERVIEW_TIMEOUT_MS = 45000;
 
@@ -63,6 +68,8 @@ export interface GetNextReplyResult {
 
 export interface EnsureWelcomeDeliveredResult extends GetNextReplyResult {
   alreadyDelivered?: boolean;
+  /** Set when the interview auto-ended because the time limit was reached. */
+  report?: InterviewReport;
 }
 
 export class AIInterviewerOrchestrator {
@@ -145,6 +152,25 @@ export class AIInterviewerOrchestrator {
     return codingBlock + focusAreasBlock;
   }
 
+  /** End the interview when the live-room time limit is reached. */
+  private async endDueToTimeLimit(
+    interviewId: string,
+    state: InterviewState
+  ): Promise<{
+    state: InterviewState | null;
+    nextReply: string;
+    report: InterviewReport;
+  }> {
+    const goodbye = INTERVIEW_TIME_UP_MESSAGE;
+    const aiTurn = conversationManager.createTurn('ai', goodbye, { isIntro: false });
+    await interviewSessionService.appendTurn(interviewId, aiTurn, { phase: 'wrap_up' });
+    const endedAt = new Date().toISOString();
+    const report = scoringReportService.buildReport({ ...state, endedAt });
+    await interviewSessionService.end(interviewId, report);
+    const finalState = await interviewSessionService.getStateWithBranding(interviewId);
+    return { state: finalState, nextReply: goodbye, report };
+  }
+
   /**
    * Submit candidate answer: evaluate it, append turns, decide follow-up vs next
    * question, and return next AI reply. If interview is at end, generate report.
@@ -153,6 +179,16 @@ export class AIInterviewerOrchestrator {
     const state = await interviewSessionService.getStateWithBranding(input.interviewId);
     if (!state) {
       return { success: false, state: null, failureReason: 'session_not_found' };
+    }
+
+    if (state.liveStartedAt && isInterviewTimeExpired(state)) {
+      const ended = await this.endDueToTimeLimit(input.interviewId, state);
+      return {
+        success: true,
+        state: ended.state,
+        nextReply: ended.nextReply,
+        report: ended.report,
+      };
     }
 
     const lastTurn = state.turns.length > 0 ? state.turns[state.turns.length - 1] : null;
@@ -167,28 +203,86 @@ export class AIInterviewerOrchestrator {
       ? questionStrategyEngine.getCompetencyIdsForQuestionId(lastQuestionId)
       : ['communication'];
 
-    const evaluation = await evaluationEngine.evaluate({
+    const evaluateInput = {
       question: lastQuestionText,
       answer: input.answerText,
       competencyIds: competencyIds.length ? competencyIds : ['communication'],
       interviewLanguage: state.interviewLanguage,
-    });
+    };
 
-    const candidateTurn = conversationManager.createTurn('candidate', input.answerText, {
-      evaluation,
-    });
+    const candidateTurn = conversationManager.createTurn('candidate', input.answerText);
     await interviewSessionService.appendTurn(input.interviewId, candidateTurn, {
       topicCoverage: lastQuestionId ? { [lastQuestionId]: true } : undefined,
     });
 
     const updatedState = await interviewSessionService.getStateWithBranding(input.interviewId);
-    if (!updatedState) return { success: true, state: null, evaluation: { score: evaluation.score, maxScore: evaluation.maxScore } };
+    if (!updatedState) return { success: true, state: null };
 
-    const requestFollowUp = evaluation.normalizedScore < 0.5 || input.answerText.length < 50;
-    const next = await questionStrategyEngine.getNextQuestion({
-      state: updatedState,
-      requestFollowUp,
-    });
+    const shortAnswer = input.answerText.trim().length < 50;
+    let evaluation: AnswerEvaluation;
+    let next: Awaited<ReturnType<typeof questionStrategyEngine.getNextQuestion>>;
+    let aiReply = '';
+
+    if (shortAnswer) {
+      evaluation = await evaluationEngine.evaluate(evaluateInput);
+      await interviewSessionService.updateTurnEvaluation(input.interviewId, candidateTurn.id, evaluation);
+      next = await questionStrategyEngine.getNextQuestion({
+        state: updatedState,
+        requestFollowUp: evaluation.normalizedScore < 0.5 || shortAnswer,
+      });
+    } else {
+      const [evalResult, provisional] = await Promise.all([
+        evaluationEngine.evaluate(evaluateInput),
+        (async () => {
+          const n = await questionStrategyEngine.getNextQuestion({
+            state: updatedState,
+            requestFollowUp: false,
+          });
+          if (!n) return { next: null as typeof n, aiReply: null as string | null };
+          try {
+            const reply = await this.getNextReplyInternal(
+              updatedState,
+              n.questionText,
+              n.questionId,
+              n.phase,
+              lastQuestionText,
+              input.answerText
+            );
+            return { next: n, aiReply: reply };
+          } catch (err) {
+            console.error('getNextReplyInternal failed (using fallback):', err);
+            return { next: n, aiReply: n.questionText || 'Thank you for that. Can you tell me a bit more?' };
+          }
+        })(),
+      ]);
+      evaluation = evalResult;
+      await interviewSessionService.updateTurnEvaluation(input.interviewId, candidateTurn.id, evaluation);
+
+      if (evaluation.normalizedScore < 0.5) {
+        next = await questionStrategyEngine.getNextQuestion({
+          state: updatedState,
+          requestFollowUp: true,
+        });
+        if (next) {
+          try {
+            aiReply = await this.getNextReplyInternal(
+              updatedState,
+              next.questionText,
+              next.questionId,
+              next.phase,
+              lastQuestionText,
+              input.answerText
+            );
+          } catch (err) {
+            console.error('getNextReplyInternal failed (using fallback):', err);
+            aiReply = next.questionText || 'Thank you for that. Can you tell me a bit more?';
+          }
+        }
+      } else {
+        next = provisional.next;
+        aiReply = provisional.aiReply ?? '';
+      }
+    }
 
     if (!next) {
       const report = scoringReportService.buildReport({ ...updatedState, endedAt: new Date().toISOString() });
@@ -202,12 +296,20 @@ export class AIInterviewerOrchestrator {
       };
     }
 
-    let aiReply: string;
-    try {
-      aiReply = await this.getNextReplyInternal(updatedState, next.questionText, next.questionId, next.phase, lastQuestionText, input.answerText);
-    } catch (err) {
-      console.error('getNextReplyInternal failed (using fallback):', err);
-      aiReply = next.questionText || 'Thank you for that. Can you tell me a bit more?';
+    if (shortAnswer) {
+      try {
+        aiReply = await this.getNextReplyInternal(
+          updatedState,
+          next.questionText,
+          next.questionId,
+          next.phase,
+          lastQuestionText,
+          input.answerText
+        );
+      } catch (err) {
+        console.error('getNextReplyInternal failed (using fallback):', err);
+        aiReply = next.questionText || 'Thank you for that. Can you tell me a bit more?';
+      }
     }
     let avatarVideo: string | undefined;
     try {
@@ -245,9 +347,21 @@ export class AIInterviewerOrchestrator {
    * Idempotent: safe to call once per session; repairs legacy sessions that only have a question turn.
    */
   async ensureWelcomeDelivered(interviewId: string): Promise<EnsureWelcomeDeliveredResult> {
+    await interviewSessionService.markLiveStarted(interviewId);
     const state = await interviewSessionService.getStateWithBranding(interviewId);
     if (!state) {
       return { success: false, state: null, reply: '' };
+    }
+
+    if (isInterviewTimeExpired(state)) {
+      const ended = await this.endDueToTimeLimit(interviewId, state);
+      return {
+        success: true,
+        state: ended.state,
+        reply: ended.nextReply,
+        alreadyDelivered: true,
+        report: ended.report,
+      };
     }
 
     const aiTurns = state.turns.filter((t) => t.role === 'ai');
@@ -307,9 +421,19 @@ export class AIInterviewerOrchestrator {
    * append a candidate turn; use this for "start interview" or when advancing phase.
    */
   async getNextReply(input: GetNextReplyInput): Promise<GetNextReplyResult> {
+    await interviewSessionService.markLiveStarted(input.interviewId);
     const state = await interviewSessionService.getStateWithBranding(input.interviewId);
     if (!state) {
       return { success: false, state: null, reply: '' };
+    }
+
+    if (isInterviewTimeExpired(state)) {
+      const ended = await this.endDueToTimeLimit(input.interviewId, state);
+      return {
+        success: true,
+        state: ended.state,
+        reply: ended.nextReply,
+      };
     }
 
     const next =
@@ -439,7 +563,7 @@ export class AIInterviewerOrchestrator {
       ? `\nInterview focus areas / subject (set by recruiter): ${state.focusAreas.replace(/coding_mode:[a-z_]+\s*\|\s*/i, '')}. Prioritize questions related to these areas when relevant.`
       : '';
     const durationBlock = state.durationMinutes
-      ? `\nInterview duration: ${state.durationMinutes} minutes. Keep questions focused and allow time for wrap-up.`
+      ? `\nInterview duration: ${resolveInterviewDurationMinutes(state.durationMinutes)} minutes. Keep questions focused and allow time for wrap-up. End gracefully before time runs out.`
       : '';
     const systemContent =
       SYSTEM_PROMPT_INTERVIEWER.replace('{{phase}}', state.phase)
@@ -461,7 +585,7 @@ The candidate answered: "${answerSnippet}"
 
 Analyze their answer. You have read their resume — reference specific skills, projects, companies, or claims naturally when asking the next question or follow-up. If their answer was vague, probe deeper. If strong, raise difficulty slightly. Your reply must: (1) Briefly reflect something specific they said. (2) Ask the next question; you may rephrase to connect to their answer. Next question topic/intent: ${questionText}
 
-Respond only with valid JSON: {"reply": "<your spoken reply: brief acknowledgment + one question>", "intent": "follow_up" | "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
+Respond only with valid JSON: {"reply": "<your spoken reply: max 40 words, brief acknowledgment + one question>", "intent": "follow_up" | "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
     } else if (answerSnippet) {
       userInstruction = `The candidate just said: "${answerSnippet}". Analyze their answer. Reference something specific they said, then ask the next question. Next question to ask: ${questionText}`;
     } else {
@@ -477,7 +601,7 @@ Respond only with valid JSON: {"reply": "<your spoken reply: brief acknowledgmen
     const llm = getLLMService();
     const response = await llm.chat(messages, {
       temperature: 0.4,
-      maxTokens: 512,
+      maxTokens: 280,
       timeoutMs: LLM_INTERVIEW_TIMEOUT_MS,
     });
     const reply = extractInterviewerReply(response.content || '', questionText);

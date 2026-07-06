@@ -155,7 +155,7 @@ export const config = {
     defaultImage: process.env.AVATAR_DEFAULT_IMAGE || '/avatars/interviewer.png',
     outputPath: process.env.AVATAR_OUTPUT_PATH || 'uploads/avatars',
     /** Max time in ms to wait for avatar generation before returning reply without video (non-blocking). */
-    generationTimeoutMs: parseInt(process.env.AVATAR_GENERATION_TIMEOUT_MS || '2500', 10),
+    generationTimeoutMs: parseInt(process.env.AVATAR_GENERATION_TIMEOUT_MS || '1200', 10),
     /** Python script path (relative to backend cwd or absolute). Default: ../ai-avatar/generate_avatar.py when backend runs from its folder. */
     pythonScriptPath: process.env.AVATAR_PYTHON_SCRIPT || path.join('..', 'ai-avatar', 'generate_avatar.py'),
   },

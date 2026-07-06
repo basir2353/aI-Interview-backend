@@ -36,8 +36,10 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV WHISPER_CPP_PATH=/usr/local/bin/whisper-cli
-ENV WHISPER_MODEL_PATH=/app/models/ggml-small.bin
+ENV WHISPER_MODEL_PATH=/app/models/ggml-base.bin
 ENV WHISPER_LANGUAGE=auto
+# Prefer Speaches on Railway — HuggingFace model downloads often fail during Docker build.
+ENV STT_PROVIDER=speaches
 
 COPY --from=whisper-builder /whisper/build/bin/whisper-cli /usr/local/bin/whisper-cli
 # Copy any shared libs if static build still emits them (libwhisper.so.1, libggml, etc.)
@@ -54,27 +56,13 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 
-# HuggingFace large downloads often fail with HTTP/2 (curl err 92); force HTTP/1.1 + retries.
-ARG WHISPER_MODEL_URL=https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
-RUN mkdir -p /app/models /app/uploads \
-    && set -eux; \
-    download_model() { \
-      local url="$1" dest="$2"; \
-      curl --http1.1 --retry 8 --retry-delay 5 --retry-all-errors \
-        --connect-timeout 30 --max-time 900 \
-        -fsSL "$url" -o "${dest}.part" \
-      && mv "${dest}.part" "$dest"; \
-    }; \
-    if ! download_model "$WHISPER_MODEL_URL" /app/models/ggml-small.bin; then \
-      rm -f /app/models/ggml-small.bin /app/models/ggml-small.bin.part; \
-      download_model "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin" /app/models/ggml-base.bin; \
-      ln -sf ggml-base.bin /app/models/ggml-small.bin; \
-    fi; \
-    test -s /app/models/ggml-small.bin
+COPY scripts/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh \
+    && mkdir -p /app/models /app/uploads
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
   CMD node -e "const p=process.env.PORT||8080;require('http').get('http://127.0.0.1:'+p+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
-CMD ["node", "dist/index.js"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

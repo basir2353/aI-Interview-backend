@@ -6,7 +6,7 @@ This backend is configured for [Railway](https://railway.app) using the included
 
 1. Push this repo to GitHub (if not already).
 2. In [Railway](https://railway.app/new), choose **Deploy from GitHub repo** and select `aI-Interview-backend`.
-3. Railway detects `railway.toml` and builds with Docker (includes Node, ffmpeg, whisper.cpp, and the STT model).
+3. Railway detects `railway.toml` and builds with Docker (Node, ffmpeg, whisper.cpp CLI — **no large model download during build**).
 4. Add a **PostgreSQL** plugin to the project — Railway injects `DATABASE_URL` automatically.
 5. Set the required environment variables (see below).
 6. Deploy. Tables are created automatically on first boot via `bootstrapDatabase()`.
@@ -213,29 +213,32 @@ Redeploy the frontend so `/api/transcribe` proxies to Railway.
 |---------|-------|------------------|
 | PostgreSQL | Local Postgres | Railway Postgres plugin |
 | LLM | Ollama or OpenRouter | Ollama template or OpenRouter |
-| STT | brew install whisper-cpp + `ggml-base.bin` | Built into Docker image (multilingual), or Speaches on Railway |
+| STT | brew install whisper-cpp + `ggml-base.bin` | **Speaches** (recommended) or `STT_PROVIDER=local` with runtime model download |
 
-## Speaches STT (recommended for production)
+## Speaches STT (required for reliable Railway deploy)
 
-Deploy **Speaches** from Railway templates (search “Speaches” — pick the one with OpenAI-compatible API, ~100% health).
+HuggingFace model downloads (**~150MB+**) often fail during Railway Docker build (`curl: (18) transfer closed`). The Dockerfile **does not** download models at build time. Use **Speaches** (or OpenAI) for production STT.
+
+Deploy **Speaches** / **Faster Whisper** from Railway templates (OpenAI-compatible API).
 
 1. Deploy Speaches in the same Railway project.
 2. Set a strong `API_KEY` on the Speaches service.
-3. Open the Speaches URL → test transcription in the Gradio UI.
+3. Open the Speaches URL → test transcription in the UI.
 4. On your **backend** service, set:
 
 ```env
 STT_PROVIDER=speaches
 SPEACHES_BASE_URL=https://your-speaches.up.railway.app
 SPEACHES_API_KEY=<same API_KEY as Speaches service>
-SPEACHES_MODEL=Systran/faster-distil-whisper-small.en
+SPEACHES_MODEL=Systran/faster-whisper-small
 ```
 
 5. Redeploy the backend. No frontend changes — audio still goes to `/api/transcribe` on your backend.
 
-**Why Speaches?** Faster than whisper.cpp on CPU, models cache on a volume, OpenAI-compatible API, and you can remove heavy STT from the backend image over time.
+**Why Speaches?** Avoids flaky HuggingFace downloads in Docker, faster on CPU, models cache on a volume, OpenAI-compatible API.
 
-**Note:** Your transcript already works with built-in whisper.cpp. The “Failed to submit answer” error is from the **LLM** (Ollama/OpenRouter), not STT — fix `LLM_PROVIDER=openrouter` first.
+**Local whisper fallback:** Set `STT_PROVIDER=local` — the container entrypoint tries to download `ggml-base.bin` at **startup** (not build). If that also fails, switch to Speaches.
+
 | Redis | Optional local | Optional Railway Redis plugin |
 
 ## Re-seed the database
@@ -261,7 +264,7 @@ The backend also seeds candidate + competencies automatically on startup via `bo
 
 ## Troubleshooting
 
-- **Build slow / fails on whisper.cpp** — First Docker build compiles whisper.cpp (~5–10 min). Subsequent builds cache layers.
+- **Build fails downloading ggml-*.bin** — HuggingFace downloads are skipped at build time. Set `STT_PROVIDER=speaches` + `SPEACHES_BASE_URL` + `SPEACHES_API_KEY` on the backend (see Speaches section above). Remove `STT_PROVIDER=local` from Railway if set.
 - **502 on startup** — Check deploy logs; DB bootstrap runs on boot and needs a valid `DATABASE_URL`.
 - **Signup / jobs return 500** — Database is not connected. Check `GET /health/db`:
   - If `databaseUrlConfigured` is `false`, link Postgres to the backend: **Railway → backend service → Variables → Add reference → `DATABASE_URL`** from the PostgreSQL plugin.

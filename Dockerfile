@@ -54,9 +54,23 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 
+# HuggingFace large downloads often fail with HTTP/2 (curl err 92); force HTTP/1.1 + retries.
+ARG WHISPER_MODEL_URL=https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
 RUN mkdir -p /app/models /app/uploads \
-    && curl -fsSL -o /app/models/ggml-small.bin \
-      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+    && set -eux; \
+    download_model() { \
+      local url="$1" dest="$2"; \
+      curl --http1.1 --retry 8 --retry-delay 5 --retry-all-errors \
+        --connect-timeout 30 --max-time 900 \
+        -fsSL "$url" -o "${dest}.part" \
+      && mv "${dest}.part" "$dest"; \
+    }; \
+    if ! download_model "$WHISPER_MODEL_URL" /app/models/ggml-small.bin; then \
+      rm -f /app/models/ggml-small.bin /app/models/ggml-small.bin.part; \
+      download_model "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin" /app/models/ggml-base.bin; \
+      ln -sf ggml-base.bin /app/models/ggml-small.bin; \
+    fi; \
+    test -s /app/models/ggml-small.bin
 
 EXPOSE 8080
 

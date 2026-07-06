@@ -312,10 +312,14 @@ async function normalizeUploadedAudio(inputPath: string): Promise<string> {
   return normalizedPath;
 }
 
-async function transcribeWithRemoteStt(filePath: string, language?: string): Promise<string> {
+async function transcribeWithRemoteStt(
+  filePath: string,
+  language?: string,
+  prompt?: string
+): Promise<string> {
   const service = new OpenAISTTService();
   const buffer = fs.readFileSync(filePath);
-  return service.transcribe(buffer, { language });
+  return service.transcribe(buffer, { language, prompt });
 }
 
 function resolveTranscribeRequest(body: { language?: string; mixed?: string }): {
@@ -417,7 +421,34 @@ async function runLocalWhisper(
   return transcript;
 }
 
-async function tryRemoteStt(normalizedPath: string, language?: string): Promise<string | null> {
+async function tryRemoteSttMixed(
+  normalizedPath: string,
+  primaryLang: string,
+  prompt?: string
+): Promise<string | null> {
+  const primaryTranscript = (await tryRemoteStt(normalizedPath, primaryLang, prompt))?.trim() ?? '';
+  if (!primaryTranscript) {
+    return await tryRemoteStt(normalizedPath, undefined, prompt);
+  }
+  if (primaryTranscript.length < 3) {
+    const autoTranscript = (await tryRemoteStt(normalizedPath, undefined, prompt))?.trim() ?? '';
+    if (autoTranscript) {
+      return pickBestTranscript(primaryTranscript, autoTranscript, primaryLang);
+    }
+    return primaryTranscript || null;
+  }
+  const autoTranscript = (await tryRemoteStt(normalizedPath, undefined, prompt))?.trim() ?? '';
+  if (autoTranscript.length >= 3) {
+    return pickBestTranscript(primaryTranscript, autoTranscript, primaryLang);
+  }
+  return primaryTranscript;
+}
+
+async function tryRemoteStt(
+  normalizedPath: string,
+  language?: string,
+  prompt?: string
+): Promise<string | null> {
   if (!remoteSttConfigured()) return null;
   try {
     logger.info(`[transcribe] using ${remoteSttLabel()}`, {
@@ -425,7 +456,7 @@ async function tryRemoteStt(normalizedPath: string, language?: string): Promise<
       model: config.stt.remote.model,
       language: language || 'auto',
     });
-    const transcript = (await transcribeWithRemoteStt(normalizedPath, language)).trim();
+    const transcript = (await transcribeWithRemoteStt(normalizedPath, language, prompt)).trim();
     return transcript || null;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -441,7 +472,7 @@ function remoteSttLabel(): string {
 function remoteSttConfigured(): boolean {
   const { baseUrl, apiKey } = config.stt.remote;
   if (config.stt.provider === 'speaches') {
-    return Boolean(baseUrl && apiKey);
+    return Boolean(baseUrl);
   }
   if (config.stt.provider === 'openai') {
     return Boolean(config.ai.openaiApiKey);
@@ -457,7 +488,9 @@ async function transcribeNormalizedAudio(
   const { primaryLang, mixed, interviewCode } = ctx;
   assertReadableAudioFile(normalizedPath);
 
+  const prompt = whisperSttPrompt(interviewCode);
   const remoteLang = primaryLang === 'auto' ? undefined : primaryLang;
+  const langForPass = primaryLang === 'auto' ? 'auto' : primaryLang;
 
   if (config.stt.provider === 'openai' || config.stt.provider === 'speaches') {
     if (!remoteSttConfigured()) {
@@ -467,7 +500,12 @@ async function transcribeNormalizedAudio(
         hasApiKey: Boolean(config.stt.remote.apiKey),
       });
     } else {
-      const remoteTranscript = await tryRemoteStt(normalizedPath, mixed ? undefined : remoteLang);
+      let remoteTranscript: string | null;
+      if (mixed && remoteLang && remoteLang !== 'auto' && remoteLang !== 'en') {
+        remoteTranscript = await tryRemoteSttMixed(normalizedPath, remoteLang, prompt);
+      } else {
+        remoteTranscript = await tryRemoteStt(normalizedPath, remoteLang, prompt);
+      }
       if (remoteTranscript) {
         return res.json({ transcript: remoteTranscript });
       }
@@ -477,7 +515,12 @@ async function transcribeNormalizedAudio(
 
   const whisperBin = await resolveWhisperBin();
   if (!whisperBin) {
-    const remoteTranscript = await tryRemoteStt(normalizedPath, mixed ? undefined : remoteLang);
+    let remoteTranscript: string | null;
+    if (mixed && remoteLang && remoteLang !== 'auto' && remoteLang !== 'en') {
+      remoteTranscript = await tryRemoteSttMixed(normalizedPath, remoteLang, prompt);
+    } else {
+      remoteTranscript = await tryRemoteStt(normalizedPath, remoteLang, prompt);
+    }
     if (remoteTranscript) {
       return res.json({ transcript: remoteTranscript });
     }
@@ -486,8 +529,8 @@ async function transcribeNormalizedAudio(
         error: 'Remote STT not configured',
         details:
           config.stt.provider === 'speaches'
-            ? 'Set SPEACHES_BASE_URL and SPEACHES_API_KEY on Railway, or remove STT_PROVIDER=speaches to use built-in whisper.cpp.'
-            : 'Set OPENAI_API_KEY or configure Speaches (SPEACHES_BASE_URL + SPEACHES_API_KEY).',
+            ? 'Set SPEACHES_BASE_URL on Railway (API key optional for self-hosted Speaches).'
+            : 'Set OPENAI_API_KEY or configure Speaches (SPEACHES_BASE_URL).',
       });
     }
     return res.status(500).json({
@@ -498,7 +541,6 @@ async function transcribeNormalizedAudio(
   }
 
   const modelPath = resolveWhisperModelPath();
-
   if (!modelPath) {
     return res.status(500).json({
       error: 'Whisper model not found',
@@ -507,36 +549,29 @@ async function transcribeNormalizedAudio(
     });
   }
 
-  const prompt = whisperSttPrompt(interviewCode);
-
   try {
     let transcript = '';
-    const langForPass = primaryLang === 'auto' ? 'auto' : primaryLang;
 
     if (mixed && langForPass !== 'auto' && langForPass !== 'en') {
-      const primaryTranscript = await runLocalWhisper(
-        whisperBin,
-        modelPath,
-        normalizedPath,
-        langForPass,
-        prompt
-      );
-      transcript = primaryTranscript.trim();
-      if (transcript.length < 3) {
-        try {
-          const autoTranscript = await runLocalWhisper(whisperBin, modelPath, normalizedPath, 'auto', prompt);
-          transcript = pickBestTranscript(primaryTranscript, autoTranscript, langForPass);
-          logger.info('[transcribe] mixed-language fallback pass', {
-            primaryLang: langForPass,
-            primaryPreview: primaryTranscript.slice(0, 80),
-            autoPreview: autoTranscript.slice(0, 80),
-            chosenPreview: transcript.slice(0, 80),
-          });
-        } catch (autoErr) {
-          logger.warn('[transcribe] auto pass failed; using primary language pass only', {
-            error: autoErr instanceof Error ? autoErr.message : String(autoErr),
-          });
-        }
+      const primaryTranscript = (
+        await runLocalWhisper(whisperBin, modelPath, normalizedPath, langForPass, prompt)
+      ).trim();
+      try {
+        const autoTranscript = (
+          await runLocalWhisper(whisperBin, modelPath, normalizedPath, 'auto', prompt)
+        ).trim();
+        transcript = pickBestTranscript(primaryTranscript, autoTranscript, langForPass);
+        logger.info('[transcribe] mixed-language dual pass', {
+          primaryLang: langForPass,
+          primaryPreview: primaryTranscript.slice(0, 80),
+          autoPreview: autoTranscript.slice(0, 80),
+          chosenPreview: transcript.slice(0, 80),
+        });
+      } catch (autoErr) {
+        logger.warn('[transcribe] auto pass failed; using primary language pass only', {
+          error: autoErr instanceof Error ? autoErr.message : String(autoErr),
+        });
+        transcript = primaryTranscript;
       }
     } else {
       transcript = await runLocalWhisper(whisperBin, modelPath, normalizedPath, langForPass, prompt);
@@ -562,7 +597,12 @@ async function transcribeNormalizedAudio(
     logger.error('[transcribe] whisper failed', { error: errOut });
     if (remoteSttConfigured()) {
       logger.warn('[transcribe] whisper.cpp failed; falling back to remote STT');
-      const remoteTranscript = await tryRemoteStt(normalizedPath, mixed ? undefined : remoteLang);
+      let remoteTranscript: string | null;
+      if (mixed && remoteLang && remoteLang !== 'auto' && remoteLang !== 'en') {
+        remoteTranscript = await tryRemoteSttMixed(normalizedPath, remoteLang, prompt);
+      } else {
+        remoteTranscript = await tryRemoteStt(normalizedPath, remoteLang, prompt);
+      }
       if (remoteTranscript) return res.json({ transcript: remoteTranscript });
     }
     return res.status(500).json({

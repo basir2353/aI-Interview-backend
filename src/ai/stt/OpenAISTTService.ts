@@ -25,7 +25,10 @@ export class OpenAISTTService implements ISTTService {
     this.model = model;
   }
 
-  async transcribe(audioBuffer: Buffer, options?: { language?: string }): Promise<string> {
+  async transcribe(
+    audioBuffer: Buffer,
+    options?: { language?: string; prompt?: string }
+  ): Promise<string> {
     if (!this.client) {
       throw new Error(
         'Remote STT not configured. Set SPEACHES_BASE_URL + SPEACHES_API_KEY, or OPENAI_API_KEY.'
@@ -34,10 +37,12 @@ export class OpenAISTTService implements ISTTService {
 
     try {
       const lang = options?.language?.trim();
+      const prompt = options?.prompt?.trim();
       const transcription = await this.client.audio.transcriptions.create({
         file: await toFile(audioBuffer, 'audio.wav'),
         model: this.model,
         ...(lang && lang !== 'auto' ? { language: lang } : {}),
+        ...(prompt ? { prompt } : {}),
       });
       return transcription.text;
     } catch (error: unknown) {

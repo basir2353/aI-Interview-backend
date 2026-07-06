@@ -11,8 +11,9 @@ import { query } from '../../db/client';
 import type { InterviewState, InterviewPhase, InterviewReport, Turn, DifficultyLevel, ScheduledCustomQuestion, InterviewLanguageCode } from '../../types';
 import type { ResumeProfile } from './ResumeProfileService';
 import type { CodingInterviewModeId } from '../../constants/codingInterviewModes';
-import { resolveBrandingForInterview } from './ScheduleBrandingService';
+import { resolveBrandingForInterview, resolveScheduleBranding } from './ScheduleBrandingService';
 import { normalizeInterviewLanguage, DEFAULT_INTERVIEW_LANGUAGE } from '../../constants/interviewLanguage';
+import { parseCodingModeFromFocusAreas } from '../../constants/codingInterviewModes';
 
 export interface StartInterviewInput {
   candidateId: string;
@@ -112,9 +113,118 @@ export class InterviewSessionService {
     }
   }
 
+  /**
+   * Rehydrate Redis from PostgreSQL when the session was lost (deploy, Redis restart, etc.).
+   */
+  async restoreSessionFromDb(interviewId: string): Promise<InterviewState | null> {
+    const { rows: interviewRows } = await query<{
+      id: string;
+      candidate_id: string;
+      position_id: string | null;
+      role: string;
+      status: string;
+      started_at: string | null;
+    }>(
+      `SELECT id, candidate_id, position_id, role, status, started_at
+       FROM interviews WHERE id = $1 LIMIT 1`,
+      [interviewId]
+    );
+    const interview = interviewRows[0];
+    if (!interview || interview.status !== 'in_progress') {
+      return null;
+    }
+
+    const { rows: scheduleRows } = await query<{
+      candidate_name: string | null;
+      preferred_difficulty: DifficultyLevel | null;
+      custom_questions: unknown;
+      focus_areas: string | null;
+      duration_minutes: number | null;
+      created_by: string | null;
+      position_id: string | null;
+      interviewer_persona: string | null;
+      company_name: string | null;
+      interview_language: string | null;
+      status: string;
+    }>(
+      `SELECT candidate_name, preferred_difficulty, custom_questions, focus_areas, duration_minutes,
+              created_by, position_id, interviewer_persona, company_name, interview_language, status
+       FROM scheduled_interviews WHERE interview_id = $1 LIMIT 1`,
+      [interviewId]
+    );
+    const schedule = scheduleRows[0];
+    if (schedule?.status === 'cancelled') {
+      return null;
+    }
+
+    let customQuestions: ScheduledCustomQuestion[] = [];
+    if (Array.isArray(schedule?.custom_questions)) {
+      customQuestions = schedule.custom_questions as ScheduledCustomQuestion[];
+    } else if (typeof schedule?.custom_questions === 'string') {
+      try {
+        const parsed = JSON.parse(schedule.custom_questions);
+        if (Array.isArray(parsed)) customQuestions = parsed as ScheduledCustomQuestion[];
+      } catch {
+        customQuestions = [];
+      }
+    }
+
+    let positionTitle: string | undefined;
+    const positionId = schedule?.position_id ?? interview.position_id;
+    if (positionId) {
+      const { rows: posRows } = await query<{ title: string }>(
+        `SELECT title FROM positions WHERE id = $1 LIMIT 1`,
+        [positionId]
+      );
+      positionTitle = posRows[0]?.title ?? undefined;
+    }
+
+    const branding = schedule
+      ? await resolveScheduleBranding({
+          scheduleInterviewerPersona: schedule.interviewer_persona,
+          scheduleCompanyName: schedule.company_name,
+          scheduleInterviewLanguage: schedule.interview_language,
+          createdBy: schedule.created_by,
+          positionId: schedule.position_id ?? interview.position_id,
+        })
+      : await resolveBrandingForInterview(interviewId);
+
+    const startedAt = interview.started_at ?? new Date().toISOString();
+    const state: InterviewState = {
+      interviewId,
+      candidateId: interview.candidate_id,
+      welcomeDelivered: false,
+      role: interview.role as InterviewState['role'],
+      phase: 'intro',
+      startedAt,
+      turns: [],
+      topicCoverage: {},
+      currentDifficulty: schedule?.preferred_difficulty ?? 'medium',
+      preferredDifficulty: schedule?.preferred_difficulty ?? undefined,
+      customQuestions,
+      focusAreas: schedule?.focus_areas?.trim() || undefined,
+      durationMinutes: schedule?.duration_minutes ?? undefined,
+      codingInterviewMode: parseCodingModeFromFocusAreas(schedule?.focus_areas),
+      positionTitle,
+      candidateDisplayName: schedule?.candidate_name?.trim() || undefined,
+      interviewerPersona: branding?.interviewerPersona,
+      companyName: branding?.companyName,
+      interviewLanguage: normalizeInterviewLanguage(
+        branding?.interviewLanguage ?? DEFAULT_INTERVIEW_LANGUAGE
+      ),
+      approximateTokens: 0,
+    };
+
+    await this.setState(interviewId, state);
+    return state;
+  }
+
   /** Load session state and backfill recruiter branding from the schedule when missing (older sessions). */
   async getStateWithBranding(interviewId: string): Promise<InterviewState | null> {
-    const state = await this.getState(interviewId);
+    let state = await this.getState(interviewId);
+    if (!state) {
+      state = await this.restoreSessionFromDb(interviewId);
+    }
     if (!state) return null;
     if (state.interviewerPersona && state.companyName !== undefined && state.interviewLanguage) {
       return state;

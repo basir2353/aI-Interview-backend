@@ -583,9 +583,9 @@ export class AIInterviewerOrchestrator {
 
 The candidate answered: "${answerSnippet}"
 
-Analyze their answer. You have read their resume — reference specific skills, projects, companies, or claims naturally when asking the next question or follow-up. If their answer was vague, probe deeper. If strong, raise difficulty slightly. Your reply must: (1) Briefly reflect something specific they said. (2) Ask the next question; you may rephrase to connect to their answer. Next question topic/intent: ${questionText}
+Analyze their answer. You have read their resume — reference specific skills, projects, companies, or claims naturally when asking the next question or follow-up. If their answer was vague, probe deeper. If strong, raise difficulty slightly. Your reply must: (1) Briefly reflect something specific they said in natural spoken words. (2) Ask the next question, rephrased so it flows from their answer — no stock transitions like "kick things off" or "moving on". Write for speech: short sentences, no markdown. Next question topic/intent: ${questionText}
 
-Respond only with valid JSON: {"reply": "<your spoken reply: max 40 words, brief acknowledgment + one question>", "intent": "follow_up" | "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
+Respond only with valid JSON: {"reply": "<your spoken reply: max 45 words, natural acknowledgment + one fluent question>", "intent": "follow_up" | "next_question", "suggestedNextPhase": null | "technical" | "behavioral" | "wrap_up"}`;
     } else if (answerSnippet) {
       userInstruction = `The candidate just said: "${answerSnippet}". Analyze their answer. Reference something specific they said, then ask the next question. Next question to ask: ${questionText}`;
     } else {

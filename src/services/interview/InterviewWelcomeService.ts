@@ -71,7 +71,7 @@ export function buildInterviewWelcome(
   return buildInterviewWelcomeParts(profile, options).join(' ');
 }
 
-/** First question AFTER the spoken intro — warm and human, localized. */
+/** First question AFTER the spoken intro — warm, fluent, localized. */
 export function buildFirstWarmUpQuestion(input: {
   candidateName?: string;
   positionTitle?: string;

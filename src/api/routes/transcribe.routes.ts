@@ -295,15 +295,13 @@ async function normalizeUploadedAudio(inputPath: string): Promise<string> {
     '16000',
     '-ac',
     '1',
-    '-af',
-    'highpass=f=80,lowpass=f=8000',
     '-c:a',
     'pcm_s16le',
     normalizedPath,
   ];
 
   logger.info('[transcribe] running ffmpeg', { args: ffmpegArgs.join(' ') });
-  const ff = await runCommand('ffmpeg', ffmpegArgs, { timeoutMs: 20000 });
+  const ff = await runCommand('ffmpeg', ffmpegArgs, { timeoutMs: 12000 });
   if (ff.code !== 0) {
     throw new Error(`ffmpeg conversion failed: ${ff.stderr.slice(0, 2000) || ff.stdout.slice(0, 2000)}`);
   }
@@ -561,6 +559,10 @@ async function transcribeNormalizedAudio(
       const primaryTranscript = (
         await runLocalWhisper(whisperBin, modelPath, normalizedPath, langForPass, prompt)
       ).trim();
+      // Dual pass only for longer answers — short clips stay single-pass for speed.
+      if (primaryTranscript.length < 40) {
+        transcript = primaryTranscript;
+      } else {
       try {
         const autoTranscript = (
           await runLocalWhisper(whisperBin, modelPath, normalizedPath, 'auto', prompt)
@@ -577,6 +579,7 @@ async function transcribeNormalizedAudio(
           error: autoErr instanceof Error ? autoErr.message : String(autoErr),
         });
         transcript = primaryTranscript;
+      }
       }
     } else {
       transcript = await runLocalWhisper(whisperBin, modelPath, normalizedPath, langForPass, prompt);

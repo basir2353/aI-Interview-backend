@@ -8,6 +8,7 @@ import { Router, Request, Response } from 'express';
 import { param } from 'express-validator';
 import { query } from '../../db/client';
 import { interviewSessionService } from '../../services/interview/InterviewSessionService';
+import { aiInterviewerOrchestrator } from '../../services/interview/AIInterviewerOrchestrator';
 import { validate } from '../middleware/validate';
 import { buildResumeContext } from '../../services/interview/ResumeContextService';
 import { parseCodingModeFromFocusAreas } from '../../constants/codingInterviewModes';
@@ -283,10 +284,23 @@ router.post(
       `UPDATE scheduled_interviews SET interview_id = $2, status = 'in_progress', updated_at = NOW() WHERE id = $1`,
       [row.id, interviewId]
     );
-    console.info(`[Join] Interview started schedule=${row.id} interviewId=${interviewId}`);
+
+    // Prepare first opener immediately so live room can speak without waiting on begin-live.
+    let liveState = state;
+    let firstReply = '';
+    try {
+      const welcome = await aiInterviewerOrchestrator.ensureWelcomeDelivered(interviewId);
+      if (welcome.state) liveState = welcome.state;
+      firstReply = welcome.reply || '';
+    } catch (err) {
+      console.warn('[Join] Prefetch welcome failed (non-blocking):', err instanceof Error ? err.message : err);
+    }
+
+    console.info(`[Join] Interview started schedule=${row.id} interviewId=${interviewId} openerReady=${Boolean(firstReply)}`);
     res.status(201).json({
       interviewId,
-      state,
+      state: liveState,
+      firstReply: firstReply || undefined,
     });
   }
 );

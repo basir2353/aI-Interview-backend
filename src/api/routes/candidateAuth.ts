@@ -7,7 +7,7 @@ import { query, formatDbError } from '../../db/client';
 import { validate } from '../middleware/validate';
 import { candidateAuthMiddleware } from '../middleware/auth';
 import { config } from '../../config';
-import { sendPasswordResetEmail, sendCandidateWelcomeEmail } from '../../services/email.service';
+import { sendPasswordResetEmail, sendCandidateWelcomeEmail, sendApplicationReceivedEmail } from '../../services/email.service';
 
 const router = Router();
 
@@ -68,14 +68,15 @@ router.post(
         { expiresIn: config.jwt.expiresIn as SignOptions['expiresIn'] }
       );
 
-      void sendCandidateWelcomeEmail({
+      const welcomeMail = await sendCandidateWelcomeEmail({
         to: normalizedEmail,
         candidateName: candidate.name,
-      }).then((result) => {
-        if (!result.sent) {
-          console.warn('[Signup] Welcome email failed:', result.error);
-        }
       });
+      if (welcomeMail.sent) {
+        console.info(`[Signup] Welcome email SENT → ${normalizedEmail}`);
+      } else {
+        console.warn(`[Signup] Welcome email FAILED → ${normalizedEmail}: ${welcomeMail.error}`);
+      }
 
       return res.status(201).json({
         token,
@@ -88,6 +89,8 @@ router.post(
           linkedinUrl: candidate.linkedin_url,
           portfolioUrl: candidate.portfolio_url,
         },
+        emailSent: welcomeMail.sent,
+        emailError: welcomeMail.error,
       });
     } catch (e) {
       console.error('Candidate signup error', formatDbError(e));
@@ -124,9 +127,20 @@ router.post(
         resetLink,
       });
       if (!mailResult.sent) {
-        console.error('Candidate forgot-password: email not sent (check MAIL_* config)', mailResult.error);
+        console.error(
+          `[ForgotPassword/Candidate] OTP email FAILED → ${normalizedEmail}: ${mailResult.error}`
+        );
+        return res.status(502).json({
+          error: 'Could not send the reset code email. Please try again in a minute.',
+          details: mailResult.error,
+        });
       }
-      return res.json({ ok: true, message: 'Check your email for a 6-digit code. If you don’t see it, check spam or try again.' });
+      console.info(`[ForgotPassword/Candidate] OTP email SENT → ${normalizedEmail}`);
+      return res.json({
+        ok: true,
+        emailSent: true,
+        message: 'Check your email for a 6-digit code. If you don’t see it, check spam or try again.',
+      });
     } catch (e) {
       console.error('Candidate forgot-password error', e);
       return res.status(500).json({ error: 'Failed to send reset code' });
@@ -448,13 +462,20 @@ router.post('/auto-apply', candidateAuthMiddleware, async (req: Request, res: Re
   const roles = prefs[0]?.preferred_roles ?? [];
   const locations = prefs[0]?.preferred_locations ?? [];
 
+  const { rows: candidateRows } = await query<{ email: string | null; name: string | null }>(
+    `SELECT email, name FROM candidates WHERE id = $1 LIMIT 1`,
+    [user.candidateId]
+  );
+  const candidateEmail = candidateRows[0]?.email?.trim().toLowerCase() || null;
+  const candidateName = candidateRows[0]?.name ?? null;
+
   const { rows: positions } = await query<{
     id: string;
     role: string;
     location: string | null;
-  }>(
-    `SELECT id, role, location FROM positions WHERE is_active = true`
-  );
+    title: string;
+    company_name: string | null;
+  }>(`SELECT id, role, location, title, company_name FROM positions WHERE is_active = true`);
 
   const matching = positions.filter((p) => {
     const roleMatch = roles.length === 0 || roles.some((r) => p.role.toLowerCase().includes(r.toLowerCase()));
@@ -472,6 +493,7 @@ router.post('/auto-apply', candidateAuthMiddleware, async (req: Request, res: Re
   const appliedSet = new Set(existing.map((e) => e.position_id));
 
   let created = 0;
+  let emailsSent = 0;
   for (const pos of matching) {
     if (appliedSet.has(pos.id)) continue;
     await query(
@@ -481,9 +503,25 @@ router.post('/auto-apply', candidateAuthMiddleware, async (req: Request, res: Re
     );
     created++;
     appliedSet.add(pos.id);
+
+    if (candidateEmail) {
+      const mail = await sendApplicationReceivedEmail({
+        to: candidateEmail,
+        candidateName,
+        jobTitle: pos.title,
+        companyName: pos.company_name,
+      });
+      if (mail.sent) emailsSent++;
+      else console.warn(`[AutoApply] Application email FAILED → ${candidateEmail} job=${pos.title}: ${mail.error}`);
+    }
   }
 
-  return res.json({ ok: true, applied: created, totalMatching: matching.length });
+  return res.json({
+    ok: true,
+    applied: created,
+    totalMatching: matching.length,
+    emailsSent,
+  });
 });
 
 export const candidateAuthRoutes = router;

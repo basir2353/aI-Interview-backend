@@ -84,10 +84,16 @@ export async function sendViaEmailJs(input: {
     template_id: config.mail.emailjs.templateId,
     user_id: config.mail.emailjs.publicKey,
     template_params: {
+      // EmailJS "To Email" must be {{to_email}} — aliases cover older template field names
       to_email: input.to,
+      email: input.to,
+      to: input.to,
+      user_email: input.to,
+      recipient: input.to,
       subject: input.subject,
       message_html: input.html,
       message: input.text,
+      message_text: input.text,
       reply_to: input.replyTo || config.mail.replyTo || '',
       from_name: config.mail.emailjs.fromName || 'Intervion',
     },

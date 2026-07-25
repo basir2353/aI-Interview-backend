@@ -1,3 +1,17 @@
+## Emails this app sends (all via EmailJS template)
+
+| Event | When |
+|-------|------|
+| Welcome | Candidate signup |
+| Application received | Job apply (+ auto-apply) |
+| Interview scheduled | Recruiter/admin schedule + auto-schedule on apply |
+| Password OTP (6-digit) | Candidate / recruiter forgot password |
+| Contact | Contact form admin notify + auto-reply |
+
+If **none** arrive: EmailJS dashboard To Email must be `{{to_email}}` (not a hardcoded address), and **Allow non-browser API** must be ON.
+
+---
+
 ## 0. CRITICAL — enable server-side API (Railway)
 
 EmailJS blocks backend/Railway by default. Without this, schedule works but **mail fails with 403** and console shows:

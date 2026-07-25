@@ -553,9 +553,20 @@ router.post(
         resetLink,
       });
       if (!mailResult.sent) {
-        console.error('Recruiter forgot-password: email not sent (check MAIL_* config)', mailResult.error);
+        console.error(
+          `[ForgotPassword/Recruiter] OTP email FAILED → ${normalizedEmail}: ${mailResult.error}`
+        );
+        return res.status(502).json({
+          error: 'Could not send the reset code email. Please try again in a minute.',
+          details: mailResult.error,
+        });
       }
-      return res.json({ ok: true, message: 'Check your email for a 6-digit code. If you don’t see it, check spam or try again.' });
+      console.info(`[ForgotPassword/Recruiter] OTP email SENT → ${normalizedEmail}`);
+      return res.json({
+        ok: true,
+        emailSent: true,
+        message: 'Check your email for a 6-digit code. If you don’t see it, check spam or try again.',
+      });
     } catch (e) {
       console.error('Recruiter forgot-password error', e);
       return res.status(500).json({ error: 'Failed to send reset code' });

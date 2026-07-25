@@ -299,12 +299,19 @@ export async function sendPasswordResetEmail(input: {
   code: string;
   resetLink?: string;
 }): Promise<{ sent: boolean; error?: string }> {
+  console.info(`[Mail] Password OTP email starting → to=${input.to}`);
   try {
     if (useEmailJs()) {
-      return sendPasswordResetViaEmailJs(input);
+      const result = await sendPasswordResetViaEmailJs(input);
+      if (result.sent) console.info(`[Mail] Password OTP SENT via EmailJS → ${input.to}`);
+      else console.error(`[Mail] Password OTP FAILED via EmailJS → ${input.to}: ${result.error}`);
+      return result;
     }
     if (useResend()) {
-      return sendPasswordResetViaResend(input);
+      const result = await sendPasswordResetViaResend(input);
+      if (result.sent) console.info(`[Mail] Password OTP SENT via Resend → ${input.to}`);
+      else console.error(`[Mail] Password OTP FAILED via Resend → ${input.to}: ${result.error}`);
+      return result;
     }
 
     const subject = 'Your password reset code — Intervion';
@@ -314,6 +321,8 @@ export async function sendPasswordResetEmail(input: {
     const result = await sendViaSmtp({ to: input.to, subject, html, text });
     if (result.sent) {
       console.info(`[Mail/SMTP] Password reset email sent to ${input.to} from ${config.mail.from}`);
+    } else {
+      console.error(`[Mail/SMTP] Password OTP FAILED → ${input.to}: ${result.error}`);
     }
     return result;
   } catch (e) {
@@ -329,12 +338,19 @@ export async function sendApplicationReceivedEmail(input: {
   jobTitle: string;
   companyName?: string | null;
 }): Promise<{ sent: boolean; error?: string }> {
+  console.info(`[Mail] Application received email starting → to=${input.to} job=${input.jobTitle}`);
   try {
     if (useEmailJs()) {
-      return sendApplicationReceivedViaEmailJs(input);
+      const result = await sendApplicationReceivedViaEmailJs(input);
+      if (result.sent) console.info(`[Mail] Application received SENT via EmailJS → ${input.to}`);
+      else console.error(`[Mail] Application received FAILED via EmailJS → ${input.to}: ${result.error}`);
+      return result;
     }
     if (useResend()) {
-      return sendApplicationReceivedViaResend(input);
+      const result = await sendApplicationReceivedViaResend(input);
+      if (result.sent) console.info(`[Mail] Application received SENT via Resend → ${input.to}`);
+      else console.error(`[Mail] Application received FAILED via Resend → ${input.to}: ${result.error}`);
+      return result;
     }
     const dashboardUrl = `${config.frontendUrl.replace(/\/$/, '')}/candidate/applications`;
     const subject = `Application received — ${input.jobTitle}`;
@@ -352,12 +368,19 @@ export async function sendCandidateWelcomeEmail(input: {
   to: string;
   candidateName?: string | null;
 }): Promise<{ sent: boolean; error?: string }> {
+  console.info(`[Mail] Welcome email starting → to=${input.to}`);
   try {
     if (useEmailJs()) {
-      return sendCandidateWelcomeViaEmailJs(input);
+      const result = await sendCandidateWelcomeViaEmailJs(input);
+      if (result.sent) console.info(`[Mail] Welcome SENT via EmailJS → ${input.to}`);
+      else console.error(`[Mail] Welcome FAILED via EmailJS → ${input.to}: ${result.error}`);
+      return result;
     }
     if (useResend()) {
-      return sendCandidateWelcomeViaResend(input);
+      const result = await sendCandidateWelcomeViaResend(input);
+      if (result.sent) console.info(`[Mail] Welcome SENT via Resend → ${input.to}`);
+      else console.error(`[Mail] Welcome FAILED via Resend → ${input.to}: ${result.error}`);
+      return result;
     }
     const dashboardUrl = `${config.frontendUrl.replace(/\/$/, '')}/candidate/dashboard`;
     const subject = `Welcome to Intervion`;

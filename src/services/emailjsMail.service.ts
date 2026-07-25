@@ -109,7 +109,11 @@ export async function sendViaEmailJs(input: {
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
-      const error = `EmailJS ${response.status}: ${errText || response.statusText}`;
+      let error = `EmailJS ${response.status}: ${errText || response.statusText}`;
+      if (response.status === 403 && /non-browser/i.test(errText)) {
+        error =
+          'EmailJS blocked server send (403). Enable “Allow EmailJS API for non-browser applications” at https://dashboard.emailjs.com/admin/account/security';
+      }
       console.error(`[Mail/EmailJS] FAILED to=${input.to} — ${error}`);
       return { sent: false, error };
     }

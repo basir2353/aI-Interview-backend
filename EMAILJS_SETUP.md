@@ -1,7 +1,16 @@
-# EmailJS setup (Intervion)
+## 0. CRITICAL — enable server-side API (Railway)
 
-Dashboard template: https://dashboard.emailjs.com/admin/templates/0k8sira  
-Gmail service ID: `service_w3c9jx9` (connected as `abasit5612345@gmail.com`)
+EmailJS blocks backend/Railway by default. Without this, schedule works but **mail fails with 403** and console shows:
+
+`API access from non-browser environments is currently disabled`
+
+1. Open https://dashboard.emailjs.com/admin/account/security  
+2. Enable **Allow EmailJS API for non-browser applications** (or similar wording)  
+3. Save  
+
+Then redeploy is not required — just schedule again.
+
+---
 
 ## 1. Template fields (Settings)
 

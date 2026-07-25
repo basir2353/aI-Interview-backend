@@ -1,6 +1,7 @@
 /**
  * Public join by token: candidate opens link, sees schedule info, starts interview.
  * No auth required. Start creates/finds candidate and starts session.
+ * Candidates may only start at/near scheduledAt; before that they get a prep waiting payload.
  */
 
 import { Router, Request, Response } from 'express';
@@ -11,43 +12,105 @@ import { validate } from '../middleware/validate';
 import { buildResumeContext } from '../../services/interview/ResumeContextService';
 import { parseCodingModeFromFocusAreas } from '../../constants/codingInterviewModes';
 import { resolveScheduleBranding } from '../../services/interview/ScheduleBrandingService';
+import {
+  buildPrepQuestions,
+  canStartInterviewNow,
+  getInterviewOpenAt,
+  secondsUntilInterviewOpen,
+} from '../../services/interviewPrep.service';
 import type { DifficultyLevel, ScheduledCustomQuestion } from '../../types';
 
 const router = Router();
 
-/** GET /public/join/:token - Get schedule info for join page (no auth) */
+type ScheduleJoinRow = {
+  id: string;
+  candidate_email: string;
+  candidate_name: string | null;
+  role: string;
+  scheduled_at: string;
+  status: string;
+  interview_id: string | null;
+  preferred_difficulty?: DifficultyLevel | null;
+  custom_questions?: unknown;
+  focus_areas?: string | null;
+  duration_minutes?: number | null;
+  position_id?: string | null;
+  application_id?: string | null;
+  resume_url?: string | null;
+  created_by?: string | null;
+  interviewer_persona?: string | null;
+  company_name?: string | null;
+  interview_language?: string | null;
+};
+
+function parseCustomQuestions(raw: unknown): ScheduledCustomQuestion[] {
+  if (Array.isArray(raw)) return raw as ScheduledCustomQuestion[];
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed as ScheduledCustomQuestion[];
+    } catch {
+      /* ignore */
+    }
+  }
+  return [];
+}
+
+/** GET /public/join/:token - Get schedule info + prep book (no auth) */
 router.get(
   '/:token',
   validate([param('token').isString().notEmpty().isLength({ min: 10 })]),
   async (req: Request, res: Response) => {
     const token = req.params.token;
     const { rows } = await query(
-      `SELECT id, candidate_email, candidate_name, role, scheduled_at, status, interview_id
-       FROM scheduled_interviews WHERE join_token = $1`,
+      `SELECT s.id, s.candidate_email, s.candidate_name, s.role, s.scheduled_at, s.status, s.interview_id,
+              s.custom_questions, s.focus_areas, s.duration_minutes, s.position_id, s.created_by,
+              s.interviewer_persona, s.company_name, s.interview_language,
+              p.title AS position_title
+       FROM scheduled_interviews s
+       LEFT JOIN positions p ON p.id = s.position_id
+       WHERE s.join_token = $1`,
       [token]
     );
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Invalid or expired link' });
     }
-    const row = rows[0] as {
-      id: string;
-      candidate_email: string;
-      candidate_name: string | null;
-      role: string;
-      scheduled_at: string;
-      status: string;
-      interview_id: string | null;
-    };
+    const row = rows[0] as ScheduleJoinRow & { position_title?: string | null };
     if (row.status === 'cancelled') {
       return res.status(410).json({ error: 'This interview was cancelled' });
     }
     if (row.interview_id && row.status === 'completed') {
       return res.json({
-        ...row,
+        id: row.id,
+        candidateEmail: row.candidate_email,
+        candidateName: row.candidate_name,
+        role: row.role,
+        scheduledAt: row.scheduled_at,
+        status: row.status,
         alreadyCompleted: true,
         interviewId: row.interview_id,
+        canStart: false,
       });
     }
+
+    const branding = await resolveScheduleBranding({
+      scheduleInterviewerPersona: row.interviewer_persona,
+      scheduleCompanyName: row.company_name,
+      scheduleInterviewLanguage: row.interview_language,
+      createdBy: row.created_by,
+      positionId: row.position_id,
+    });
+
+    const alreadyInProgress = Boolean(row.interview_id && row.status === 'in_progress');
+    const canStart = alreadyInProgress || canStartInterviewNow(row.scheduled_at);
+    const openAt = getInterviewOpenAt(row.scheduled_at).toISOString();
+    const secondsUntilStart = alreadyInProgress ? 0 : secondsUntilInterviewOpen(row.scheduled_at);
+    const prepQuestions = buildPrepQuestions({
+      role: row.role,
+      customQuestions: row.custom_questions,
+      focusAreas: row.focus_areas,
+    });
+
     res.json({
       id: row.id,
       candidateEmail: row.candidate_email,
@@ -57,54 +120,37 @@ router.get(
       status: row.status,
       alreadyCompleted: false,
       interviewId: row.interview_id,
+      canStart,
+      openAt,
+      secondsUntilStart,
+      serverNow: new Date().toISOString(),
+      durationMinutes: row.duration_minutes ?? null,
+      focusAreas: row.focus_areas ?? null,
+      positionTitle: row.position_title ?? null,
+      companyName: branding.companyName,
+      interviewerPersona: branding.interviewerPersona,
+      prepQuestions,
     });
   }
 );
 
-/** POST /public/join/:token/start - Start interview (create candidate if needed, return interviewId + firstReply) */
+/** POST /public/join/:token/start - Start interview (blocked until scheduled window) */
 router.post(
   '/:token/start',
   validate([param('token').isString().notEmpty().isLength({ min: 10 })]),
   async (req: Request, res: Response) => {
     const token = req.params.token;
     const { rows } = await query(
-      `SELECT id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, position_id, application_id, resume_url, status, interview_id, created_by, interviewer_persona, company_name, interview_language
+      `SELECT id, candidate_email, candidate_name, role, preferred_difficulty, custom_questions, focus_areas, duration_minutes, position_id, application_id, resume_url, status, interview_id, created_by, interviewer_persona, company_name, interview_language, scheduled_at
        FROM scheduled_interviews WHERE join_token = $1`,
       [token]
     );
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Invalid or expired link' });
     }
-    const row = rows[0] as {
-      id: string;
-      candidate_email: string;
-      candidate_name: string | null;
-      role: string;
-      preferred_difficulty: DifficultyLevel | null;
-      custom_questions: unknown;
-      focus_areas: string | null;
-      duration_minutes: number | null;
-      position_id: string | null;
-      application_id: string | null;
-      resume_url: string | null;
-      status: string;
-      interview_id: string | null;
-      created_by: string | null;
-      interviewer_persona: string | null;
-      company_name: string | null;
-      interview_language: string | null;
-    };
-    let customQuestions: ScheduledCustomQuestion[] = [];
-    if (Array.isArray(row.custom_questions)) {
-      customQuestions = row.custom_questions as ScheduledCustomQuestion[];
-    } else if (typeof row.custom_questions === 'string') {
-      try {
-        const parsed = JSON.parse(row.custom_questions);
-        if (Array.isArray(parsed)) customQuestions = parsed as ScheduledCustomQuestion[];
-      } catch {
-        customQuestions = [];
-      }
-    }
+    const row = rows[0] as ScheduleJoinRow;
+    let customQuestions = parseCustomQuestions(row.custom_questions);
+
     if (row.status === 'cancelled') {
       return res.status(410).json({ error: 'This interview was cancelled' });
     }
@@ -118,6 +164,23 @@ router.post(
         });
       }
     }
+
+    if (!canStartInterviewNow(row.scheduled_at)) {
+      const secondsUntilStart = secondsUntilInterviewOpen(row.scheduled_at);
+      const openAt = getInterviewOpenAt(row.scheduled_at).toISOString();
+      console.info(
+        `[Join] Too early to start schedule=${row.id} opensAt=${openAt} waitSec=${secondsUntilStart}`
+      );
+      return res.status(403).json({
+        error: 'Your interview has not opened yet. Please wait until the scheduled time.',
+        code: 'TOO_EARLY',
+        scheduledAt: row.scheduled_at,
+        openAt,
+        secondsUntilStart,
+        serverNow: new Date().toISOString(),
+      });
+    }
+
     let candidateId: string;
     const { rows: candRows } = await query<{ id: string }>(
       `SELECT id FROM candidates WHERE email = $1 LIMIT 1`,
@@ -220,6 +283,7 @@ router.post(
       `UPDATE scheduled_interviews SET interview_id = $2, status = 'in_progress', updated_at = NOW() WHERE id = $1`,
       [row.id, interviewId]
     );
+    console.info(`[Join] Interview started schedule=${row.id} interviewId=${interviewId}`);
     res.status(201).json({
       interviewId,
       state,

@@ -12,6 +12,26 @@ Then redeploy is not required — just schedule again.
 
 ---
 
+## Fix: “The template ID not found” (400)
+
+Use the Template ID from template **Settings**, not the URL slug.
+
+**Your ID:** `template_d1jf0sp`
+
+```env
+EMAILJS_TEMPLATE_ID=template_d1jf0sp
+```
+
+Set this on Railway Variables and restart the backend.
+
+---
+
+## Fix: “Gmail_API: Invalid grant” (412)
+
+Gmail connection expired. In EmailJS → **Email Services** → your Gmail service → **Reconnect** / Connect again as `abasit5612345@gmail.com`, allow send permission, then test again.
+
+---
+
 ## 1. Template fields (Settings)
 
 | Field | Value |
@@ -115,7 +135,7 @@ From [Account](https://dashboard.emailjs.com/admin/account):
 ```env
 MAIL_PROVIDER=emailjs
 EMAILJS_SERVICE_ID=service_w3c9jx9
-EMAILJS_TEMPLATE_ID=0k8sira
+EMAILJS_TEMPLATE_ID=template_d1jf0sp
 EMAILJS_PUBLIC_KEY=YOUR_PUBLIC_KEY_HERE
 EMAILJS_PRIVATE_KEY=YOUR_PRIVATE_KEY_HERE
 EMAILJS_FROM_NAME=Intervion

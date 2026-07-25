@@ -18,6 +18,7 @@ import {
   sendCandidateWelcomeViaEmailJs,
   verifyEmailJsConnection,
 } from './emailjsMail.service';
+import { formatScheduledAtForDisplay } from '../utils/formatScheduleTime';
 import {
   isResendConfigured,
   sendInterviewScheduleViaResend,
@@ -228,6 +229,7 @@ export async function sendInterviewScheduleEmail(input: {
   companyName?: string | null;
   jobTitle?: string | null;
   durationMinutes?: number | null;
+  timeZone?: string | null;
 }): Promise<{ sent: boolean; error?: string }> {
   const provider = useEmailJs() ? 'emailjs' : useResend() ? 'resend' : 'smtp';
   console.info(
@@ -253,7 +255,7 @@ export async function sendInterviewScheduleEmail(input: {
       return result;
     }
 
-    const scheduledAtText = new Date(input.scheduledAt).toLocaleString();
+    const scheduledAtText = formatScheduledAtForDisplay(input.scheduledAt, input.timeZone);
     const subject = `Interview invitation — ${input.jobTitle?.trim() || input.role}`;
     const html = interviewScheduleHtml({
       candidateName: input.candidateName,

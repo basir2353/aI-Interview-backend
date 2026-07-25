@@ -805,10 +805,11 @@ router.post(
     body('role').isIn(ROLES),
     body('scheduledAt').isISO8601().withMessage('scheduledAt must be a valid ISO 8601 date'),
     body('positionId').optional().isUUID(),
+    body('timeZone').optional().isString().isLength({ max: 64 }),
   ]),
   async (req: Request, res: Response) => {
     try {
-      const { candidateEmail, candidateName, role, scheduledAt, positionId } = req.body;
+      const { candidateEmail, candidateName, role, scheduledAt, positionId, timeZone } = req.body;
       const joinToken = crypto.randomBytes(32).toString('hex');
       const { rows } = await query<{
         id: string;
@@ -838,6 +839,7 @@ router.post(
         role: row.role,
         scheduledAt: row.scheduled_at,
         joinUrl,
+        timeZone,
       });
       await query(
         `UPDATE scheduled_interviews

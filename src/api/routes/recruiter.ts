@@ -373,6 +373,7 @@ router.post(
     body('durationMinutes').optional().isInt({ min: 5, max: 17 }),
     body('interviewerPersona').optional().isIn(INTERVIEWER_PERSONAS),
     body('interviewLanguage').optional().isIn(INTERVIEW_LANGUAGE_CODES),
+    body('timeZone').optional().isString().isLength({ max: 64 }),
   ]),
   async (req: Request, res: Response) => {
     const user = (req as Request & { user: { userId?: string } }).user;
@@ -386,7 +387,7 @@ router.post(
     }
     try {
       const { id } = req.params;
-      const { scheduledAt, role, message, difficulty, customQuestions, codingQuestions, focusAreas, durationMinutes, interviewerPersona, interviewLanguage } = req.body as {
+      const { scheduledAt, role, message, difficulty, customQuestions, codingQuestions, focusAreas, durationMinutes, interviewerPersona, interviewLanguage, timeZone } = req.body as {
         scheduledAt: string;
         role?: (typeof ROLES)[number];
         message?: string;
@@ -397,6 +398,7 @@ router.post(
         durationMinutes?: number;
         interviewerPersona?: InterviewerPersona;
         interviewLanguage?: string;
+        timeZone?: string;
       };
       const { rows: recruiterRows } = await query<{ name: string | null; company_name: string | null; interviewer_persona: string | null; default_interview_language: string | null }>(
         `SELECT name, company_name, interviewer_persona, default_interview_language FROM users WHERE id = $1 LIMIT 1`,
@@ -494,6 +496,7 @@ router.post(
         companyName: row.position_company || recruiterCompany,
         jobTitle: row.position_title || undefined,
         durationMinutes: durationMinutes ?? null,
+        timeZone,
       });
       await query(
         `UPDATE scheduled_interviews
@@ -805,6 +808,7 @@ router.post(
     body('resumeUrl').optional().isString(),
     body('interviewerPersona').optional().isIn(INTERVIEWER_PERSONAS),
     body('interviewLanguage').optional().isIn(INTERVIEW_LANGUAGE_CODES),
+    body('timeZone').optional().isString().isLength({ max: 64 }),
   ]),
   async (req: Request, res: Response) => {
     const user = (req as Request & { user: { userId?: string } }).user;
@@ -821,7 +825,7 @@ router.post(
       return res.status(403).json({ error: 'Limited access: you can only schedule from Applications, not create direct links.' });
     }
     try {
-      const { candidateEmail, candidateName, role, scheduledAt, positionId, message, difficulty, customQuestions, codingQuestions, focusAreas, durationMinutes, resumeUrl, interviewerPersona, interviewLanguage } = req.body as {
+      const { candidateEmail, candidateName, role, scheduledAt, positionId, message, difficulty, customQuestions, codingQuestions, focusAreas, durationMinutes, resumeUrl, interviewerPersona, interviewLanguage, timeZone } = req.body as {
         candidateEmail: string;
         candidateName?: string;
         role: (typeof ROLES)[number];
@@ -836,6 +840,7 @@ router.post(
         resumeUrl?: string;
         interviewerPersona?: InterviewerPersona;
         interviewLanguage?: string;
+        timeZone?: string;
       };
       const normalizedQuestions = normalizeScheduleQuestions({
         role,
@@ -914,6 +919,7 @@ router.post(
         companyName: positionCompany || recruiterCompany,
         jobTitle,
         durationMinutes: durationMinutes ?? null,
+        timeZone,
       });
       await query(
         `UPDATE scheduled_interviews

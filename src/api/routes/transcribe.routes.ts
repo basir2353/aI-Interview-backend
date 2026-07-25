@@ -274,10 +274,22 @@ function assertReadableAudioFile(filePath: string): void {
   }
 }
 
+/**
+ * whisper.cpp / miniaudio need a real `.wav` extension. Multer `dest` files are
+ * extensionless (`/tmp/<hash>`), so a ready PCM WAV still fails decode unless renamed.
+ */
+function ensureWavExtension(filePath: string): string {
+  if (path.extname(filePath).toLowerCase() === '.wav') return filePath;
+  const withExt = `${filePath}.wav`;
+  fs.renameSync(filePath, withExt);
+  return withExt;
+}
+
 async function normalizeUploadedAudio(inputPath: string): Promise<string> {
   if (isWhisperReadyWav16kMonoPcmS16le(inputPath)) {
-    logger.info('[transcribe] using uploaded 16kHz mono WAV directly', { inputPath });
-    return inputPath;
+    const wavPath = ensureWavExtension(inputPath);
+    logger.info('[transcribe] using uploaded 16kHz mono WAV directly', { inputPath: wavPath });
+    return wavPath;
   }
 
   if (!hasFfmpeg()) {
@@ -289,6 +301,9 @@ async function normalizeUploadedAudio(inputPath: string): Promise<string> {
   const normalizedPath = path.join(os.tmpdir(), `uploaded_${Date.now()}_16k_mono.wav`);
   const ffmpegArgs = [
     '-y',
+    '-hide_banner',
+    '-loglevel',
+    'error',
     '-i',
     inputPath,
     '-ar',
@@ -297,11 +312,13 @@ async function normalizeUploadedAudio(inputPath: string): Promise<string> {
     '1',
     '-c:a',
     'pcm_s16le',
+    '-f',
+    'wav',
     normalizedPath,
   ];
 
   logger.info('[transcribe] running ffmpeg', { args: ffmpegArgs.join(' ') });
-  const ff = await runCommand('ffmpeg', ffmpegArgs, { timeoutMs: 12000 });
+  const ff = await runCommand('ffmpeg', ffmpegArgs, { timeoutMs: 20000 });
   if (ff.code !== 0) {
     throw new Error(`ffmpeg conversion failed: ${ff.stderr.slice(0, 2000) || ff.stdout.slice(0, 2000)}`);
   }

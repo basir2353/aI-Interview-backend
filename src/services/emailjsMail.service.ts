@@ -23,6 +23,7 @@ import {
   candidateWelcomeHtml,
   candidateWelcomeText,
 } from './emailTemplates';
+import { formatScheduledAtForDisplay } from '../utils/formatScheduleTime';
 
 const EMAILJS_SEND_URL = 'https://api.emailjs.com/api/v1.0/email/send';
 const EMAILJS_SEND_TIMEOUT_MS = 20_000;
@@ -138,8 +139,9 @@ export async function sendInterviewScheduleViaEmailJs(input: {
   companyName?: string | null;
   jobTitle?: string | null;
   durationMinutes?: number | null;
+  timeZone?: string | null;
 }): Promise<{ sent: boolean; error?: string }> {
-  const scheduledAtText = new Date(input.scheduledAt).toLocaleString();
+  const scheduledAtText = formatScheduledAtForDisplay(input.scheduledAt, input.timeZone);
   const subject = `Interview invitation — ${input.jobTitle?.trim() || input.role}`;
   const html = interviewScheduleHtml({
     candidateName: input.candidateName,

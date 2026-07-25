@@ -14,6 +14,7 @@ import {
   candidateWelcomeHtml,
   candidateWelcomeText,
 } from './emailTemplates';
+import { formatScheduledAtForDisplay } from '../utils/formatScheduleTime';
 
 const RESEND_SEND_TIMEOUT_MS = 15_000;
 
@@ -113,8 +114,9 @@ export async function sendInterviewScheduleViaResend(input: {
   companyName?: string | null;
   jobTitle?: string | null;
   durationMinutes?: number | null;
+  timeZone?: string | null;
 }): Promise<{ sent: boolean; error?: string }> {
-  const scheduledAtText = new Date(input.scheduledAt).toLocaleString();
+  const scheduledAtText = formatScheduledAtForDisplay(input.scheduledAt, input.timeZone);
   const subject = `Interview invitation — ${input.jobTitle?.trim() || input.role}`;
   const html = interviewScheduleHtml({
     candidateName: input.candidateName,

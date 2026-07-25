@@ -2,9 +2,8 @@
  * Live production smoke tests. Run: node backend/scripts/test-live-stack.cjs
  */
 const BACKEND = 'https://ai-interview-backend-production-e046.up.railway.app';
-const FRONTEND = 'https://a-i-interview-frontend.vercel.app';
+const FRONTEND = 'https://www.intervionai.online';
 const SPEACHES = 'https://faster-whisper-production-f15d.up.railway.app';
-const OLLAMA = 'https://ollama-production-f380.up.railway.app';
 
 async function check(name, url, opts = {}) {
   try {
@@ -30,8 +29,8 @@ async function main() {
 
   await check('Backend /health', `${BACKEND}/health`);
   await check('Backend /health/db', `${BACKEND}/health/db`);
+  await check('Backend /llm/health (OpenRouter)', `${BACKEND}/api/v1/llm/health`);
   await check('Speaches /health', `${SPEACHES}/health`);
-  await check('Ollama /api/tags', `${OLLAMA}/api/tags`);
   await check('Frontend proxy /jobs', `${FRONTEND}/api/proxy/public/jobs`);
 
   const fs = require('fs');
@@ -52,7 +51,8 @@ async function main() {
   console.log('1. Transcribe 500: set SPEACHES_API_KEY on backend = API_KEY from Faster Whisper service');
   console.log('   OR set STT_PROVIDER=local on Railway backend');
   console.log('2. Answer submit 500: ensure LLM_PROVIDER=openrouter + valid OPENROUTER_API_KEY');
-  console.log('3. Redeploy backend after env changes (and push latest code for STT fallback)');
+  console.log('3. Redeploy backend after env changes');
+  console.log('4. Ollama is not required — remove OLLAMA_* vars from Railway');
 }
 
 main();

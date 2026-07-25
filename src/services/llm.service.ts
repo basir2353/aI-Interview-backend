@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { config } from '../config';
 import { logger } from '../config/logger';
+import { getLLMService } from '../ai/llm';
 
 interface OllamaGenerateRequest {
     model: string;
@@ -22,10 +23,10 @@ interface OllamaGenerateResponse {
 }
 
 /**
- * Local LLM Service using Ollama
- * Provides streaming and non-streaming text generation
+ * Legacy LLM facade used by Socket/voice-interview and /llm routes.
+ * Respects LLM_PROVIDER: OpenRouter when set to openrouter, otherwise Ollama.
  */
-/** Fallback JSON reply when no Ollama model is available (so the interview can still run). */
+/** Fallback JSON reply when no model is available (so the interview can still run). */
 function fallbackReplyFromPrompt(prompt: string): string {
     const match = prompt.match(/Next question to ask:\s*(.+)$/s);
     const question = match ? match[1].trim() : 'Can you tell me a bit more about your experience?';
@@ -51,12 +52,41 @@ export class LLMService {
         this.maxTokens = parseInt(process.env.OLLAMA_MAX_TOKENS || '500');
     }
 
+    private get isOpenRouter(): boolean {
+        return config.ai.llmProvider === 'openrouter';
+    }
+
     /**
-     * Check if Ollama is running and ensure the configured model is available.
-     * If the configured model is not found, falls back to the first available model.
-     * If no models are installed, modelAvailable is set false and we use fallback replies.
+     * Health check for the active LLM provider.
      */
     async healthCheck(): Promise<boolean> {
+        if (this.isOpenRouter) {
+            if (!config.ai.openRouterApiKey) {
+                logger.warn('OpenRouter selected but OPENROUTER_API_KEY is empty');
+                return false;
+            }
+            try {
+                await axios.get('https://openrouter.ai/api/v1/models', {
+                    headers: { Authorization: `Bearer ${config.ai.openRouterApiKey}` },
+                    timeout: 8000,
+                });
+                logger.info('OpenRouter health check passed', { model: config.ai.openRouterModel });
+                return true;
+            } catch (error) {
+                // Key may still work for chat even if the models probe fails (rate limit, etc.).
+                const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+                if (status === 401 || status === 403) {
+                    logger.warn('OpenRouter health check failed: invalid API key', { status });
+                    return false;
+                }
+                logger.warn('OpenRouter models probe failed; API key is set — chat may still work', {
+                    status,
+                    message: error instanceof Error ? error.message : String(error),
+                });
+                return true;
+            }
+        }
+
         try {
             const response = await axios.get<{ models: { name: string }[] }>(`${this.baseUrl}/api/tags`, {
                 timeout: 3000,
@@ -99,7 +129,7 @@ export class LLMService {
                     code,
                     status,
                     target,
-                    hint: 'Start Ollama with `ollama serve` or set OPENROUTER_API_KEY to use OpenRouter instead.',
+                    hint: 'Start Ollama with `ollama serve` or set LLM_PROVIDER=openrouter with OPENROUTER_API_KEY.',
                 });
                 return false;
             }
@@ -112,9 +142,22 @@ export class LLMService {
 
     /**
      * Generate a complete response (non-streaming).
-     * If no Ollama model is available, returns a fallback reply so the interview can continue.
      */
     async generate(prompt: string, context?: number[]): Promise<string> {
+        if (this.isOpenRouter) {
+            try {
+                const llm = getLLMService();
+                const result = await llm.chat(
+                    [{ role: 'user', content: prompt }],
+                    { temperature: this.temperature, maxTokens: this.maxTokens }
+                );
+                return result.content || fallbackReplyFromPrompt(prompt);
+            } catch (error) {
+                logger.error('OpenRouter generation failed', { error });
+                return fallbackReplyFromPrompt(prompt);
+            }
+        }
+
         if (!this.modelAvailable) {
             logger.debug('Using fallback reply (no Ollama model available)');
             return fallbackReplyFromPrompt(prompt);
@@ -154,13 +197,19 @@ export class LLMService {
     }
 
     /**
-     * Generate a streaming response (token-by-token)
-     * Returns an async generator that yields tokens
+     * Generate a streaming response (token-by-token).
+     * OpenRouter path yields the full completion in one chunk (no native stream here).
      */
     async *generateStream(
         prompt: string,
         context?: number[]
     ): AsyncGenerator<string, void, unknown> {
+        if (this.isOpenRouter) {
+            const text = await this.generate(prompt, context);
+            yield text;
+            return;
+        }
+
         if (!this.modelAvailable) {
             const fallback = fallbackReplyFromPrompt(prompt);
             yield fallback;
@@ -189,7 +238,6 @@ export class LLMService {
                 }
             );
 
-            // Process the stream line by line
             for await (const chunk of response.data) {
                 const lines = chunk.toString().split('\n').filter(Boolean);
 
@@ -202,7 +250,7 @@ export class LLMService {
                         if (data.done) {
                             return;
                         }
-                    } catch (parseError) {
+                    } catch {
                         logger.warn('Failed to parse streaming chunk', { line });
                     }
                 }
@@ -220,9 +268,6 @@ export class LLMService {
         }
     }
 
-    /**
-     * Generate interview question based on context
-     */
     async generateInterviewQuestion(
         category: string,
         difficulty: 'easy' | 'medium' | 'hard',
@@ -237,9 +282,6 @@ export class LLMService {
         return this.generate(prompt, context);
     }
 
-    /**
-     * Generate follow-up question based on candidate's answer
-     */
     async generateFollowUpQuestion(
         originalQuestion: string,
         candidateAnswer: string,
@@ -256,9 +298,6 @@ Follow-up question:`;
         return this.generate(prompt, context);
     }
 
-    /**
-     * Evaluate candidate's answer
-     */
     async evaluateAnswer(
         question: string,
         answer: string,
@@ -291,16 +330,14 @@ Respond in JSON format:
         const response = await this.generate(prompt, context);
 
         try {
-            // Extract JSON from response
             const jsonMatch = response.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 return JSON.parse(jsonMatch[0]);
             }
-        } catch (error) {
+        } catch {
             logger.error('Failed to parse evaluation response', { response });
         }
 
-        // Fallback response
         return {
             score: 50,
             feedback: 'Unable to evaluate answer properly.',
@@ -309,9 +346,6 @@ Respond in JSON format:
         };
     }
 
-    /**
-     * Build interview question prompt
-     */
     private buildInterviewQuestionPrompt(
         category: string,
         difficulty: 'easy' | 'medium' | 'hard',
@@ -340,9 +374,6 @@ Keep it concise (1-2 sentences).
         return prompt;
     }
 
-    /**
-     * Generate interview summary
-     */
     async generateInterviewSummary(
         transcript: Array<{ speaker: string; text: string }>,
         scores: any

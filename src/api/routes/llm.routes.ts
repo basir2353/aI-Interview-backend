@@ -1,28 +1,37 @@
 import { Router } from 'express';
+import { config } from '../../config';
 import { logger } from '../../config/logger';
 import { llmService } from '../../services/llm.service';
 
 const router = Router();
 
 /**
- * Health check for Ollama LLM service
+ * Health check for the configured LLM provider (OpenRouter or Ollama).
  */
 router.get('/health', async (req, res) => {
     try {
+        const provider = config.ai.llmProvider;
         const isHealthy = await llmService.healthCheck();
 
         if (isHealthy) {
             res.json({
                 status: 'ok',
-                service: 'ollama',
-                baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
-                model: process.env.OLLAMA_MODEL || 'llama3',
+                service: provider,
+                ...(provider === 'openrouter'
+                    ? { model: config.ai.openRouterModel }
+                    : {
+                          baseUrl: config.ai.ollamaBaseUrl,
+                          model: config.ai.ollamaModel,
+                      }),
             });
         } else {
             res.status(503).json({
                 status: 'unavailable',
-                service: 'ollama',
-                message: 'Ollama service is not accessible',
+                service: provider,
+                message:
+                    provider === 'openrouter'
+                        ? 'OpenRouter is not accessible — check OPENROUTER_API_KEY'
+                        : 'Ollama service is not accessible',
             });
         }
     } catch (error) {
@@ -49,6 +58,7 @@ router.post('/test', async (req, res) => {
 
         res.json({
             success: true,
+            provider: config.ai.llmProvider,
             prompt,
             response,
         });

@@ -84,15 +84,28 @@ async function initializeServices(io: SocketIOServer): Promise<void> {
     logger.warn('Positions setup failed:', (e as Error).message);
   }
 
-  if (config.ai.llmProvider === 'ollama') {
+  if (config.ai.llmProvider === 'openrouter') {
+    if (!config.ai.openRouterApiKey) {
+      logger.error(
+        'LLM_PROVIDER=openrouter but OPENROUTER_API_KEY is empty — interview AI will use fallback questions'
+      );
+    } else {
+      const healthy = await llmService.healthCheck();
+      if (healthy) {
+        logger.info(`OpenRouter ready (model: ${config.ai.openRouterModel})`);
+      } else {
+        logger.warn(
+          `OpenRouter health check failed. Verify OPENROUTER_API_KEY and model ${config.ai.openRouterModel}.`
+        );
+      }
+    }
+  } else {
     const ollamaHealthy = await llmService.healthCheck();
     if (!ollamaHealthy) {
       logger.warn(
-        `Ollama is not accessible at ${config.ai.ollamaBaseUrl}. Pull a model on the Ollama service (e.g. ollama pull ${config.ai.ollamaModel}).`
+        `Ollama is not accessible at ${config.ai.ollamaBaseUrl}. Set LLM_PROVIDER=openrouter + OPENROUTER_API_KEY, or pull a model (e.g. ollama pull ${config.ai.ollamaModel}).`
       );
     }
-  } else {
-    logger.info('OpenRouter configured; skipping Ollama health check');
   }
 
   const sttInitialized = await sttService.initialize();

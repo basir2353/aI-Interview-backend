@@ -11,65 +11,36 @@ This backend is configured for [Railway](https://railway.app) using the included
 5. Set the required environment variables (see below).
 6. Deploy. Tables are created automatically on first boot via `bootstrapDatabase()`.
 
-## LLM: Ollama on Railway (interview answers)
+## LLM: OpenRouter (recommended for Railway)
 
-### Which template to pick
+Ollama is **not required**. Use OpenRouter for interview questions and evaluation.
 
-| Template | Use when |
-|----------|----------|
-| **Ollama [Updated Jun '26]** (recommended) | You only need an API for your backend — best success rate in Railway templates |
-| **Ollama** | Same idea, older template |
-| **Ollama API** | Alternative API-focused deploy |
-| **Ollama with Open WebUI** | You also want a browser UI to chat/test models (extra RAM) |
-
-Pick **Ollama [Updated Jun '26]** unless you specifically want the Web UI.
-
-### Step-by-step
-
-1. In your **same Railway project** (where backend + Postgres live), click **+ New** → **Template** → **Ollama [Updated Jun '26]** → Deploy.
-2. Wait until the Ollama service is **Running**.
-3. Open the **Ollama** service → **Shell** and pull a model (start small on CPU):
-
-   ```bash
-   ollama pull llama3.2:3b
-   ```
-
-4. On your **backend** service → **Variables**, add:
+1. Get an API key at [openrouter.ai](https://openrouter.ai).
+2. On your **backend** service → **Variables**, set:
 
    ```env
-   LLM_PROVIDER=ollama
-   OLLAMA_BASE_URL=http://${{Ollama.RAILWAY_PRIVATE_DOMAIN}}:11434
-   OLLAMA_MODEL=llama3.2:3b
+   LLM_PROVIDER=openrouter
+   OPENROUTER_API_KEY=sk-or-v1-...
+   OPENROUTER_MODEL=openai/gpt-4o-mini
    ```
 
-   Replace `Ollama` with your Ollama service name if you renamed it. Use **Add reference** for the private domain variable.
+3. Remove any leftover `OLLAMA_BASE_URL` / `OLLAMA_MODEL` if you deleted the Ollama service.
+4. **Redeploy the backend**, then check logs for: `OpenRouter ready (model: ...)`.
+5. Smoke test: `GET /api/v1/llm/health` should return `{ "status": "ok", "service": "openrouter", ... }`.
 
-5. **Redeploy the backend** (Variables → Deploy or push a commit).
+### Optional: local Ollama (dev only)
 
-6. Check backend logs for: `Ollama health check passed`.
-
-### OpenRouter vs Ollama
-
-- With `OPENROUTER_API_KEY` set, the app used to always pick OpenRouter.
-- Set **`LLM_PROVIDER=ollama`** to force Ollama even if OpenRouter key exists.
-- Set **`LLM_PROVIDER=openrouter`** to force OpenRouter.
-
-### Notes
-
-- Ollama on Railway **CPU** is slow for large models — use `llama3.2:3b` or `phi3:mini`.
-- For faster answers, keep **OpenRouter** (`LLM_PROVIDER=openrouter`) instead of self-hosted Ollama.
-- Backend talks to Ollama over **Private Networking** — do not expose Ollama publicly unless you add auth.
+Set `LLM_PROVIDER=ollama` with `OLLAMA_BASE_URL` and `OLLAMA_MODEL` when running Ollama locally. Not needed on Railway.
 
 ## Required environment variables
 
 | Variable | Description |
 |----------|-------------|
 | `JWT_SECRET` | Long random string for auth tokens |
-| `OPENROUTER_API_KEY` | LLM when `LLM_PROVIDER=openrouter` ([openrouter.ai](https://openrouter.ai)) |
-| `LLM_PROVIDER` | `ollama` or `openrouter` (optional; see Ollama section above) |
-| `OLLAMA_BASE_URL` | Ollama API URL when using `LLM_PROVIDER=ollama` |
-| `OLLAMA_MODEL` | Model name, e.g. `llama3.2:3b` |
-| `FRONTEND_URL` | Your deployed frontend URL (e.g. `https://your-app.vercel.app`) |
+| `LLM_PROVIDER` | `openrouter` (production) or `ollama` (local) |
+| `OPENROUTER_API_KEY` | Required when `LLM_PROVIDER=openrouter` ([openrouter.ai](https://openrouter.ai)) |
+| `OPENROUTER_MODEL` | e.g. `openai/gpt-4o-mini` |
+| `FRONTEND_URL` | Your deployed frontend URL (e.g. `https://www.intervionai.online`) |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Admin login credentials |
 
 Railway sets `PORT` and `DATABASE_URL` automatically — do not override `PORT`.

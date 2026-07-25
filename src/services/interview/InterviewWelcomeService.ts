@@ -71,17 +71,20 @@ export function buildInterviewWelcome(
   return buildInterviewWelcomeParts(profile, options).join(' ');
 }
 
-/** First question AFTER the spoken intro — warm, fluent, localized. */
+/** First spoken opener: brief greeting + first question in one human turn. */
 export function buildFirstWarmUpQuestion(input: {
   candidateName?: string;
   positionTitle?: string;
   roleLabel?: string;
   codingModeId?: CodingInterviewModeId;
   interviewLanguage?: InterviewLanguageCode | string;
+  companyName?: string | null;
+  interviewerName?: string;
 }): string {
   const lang = normalizeInterviewLanguage(input.interviewLanguage ?? DEFAULT_INTERVIEW_LANGUAGE);
   const ctx: WelcomeLocaleContext = {
-    interviewerName: 'Ethan',
+    interviewerName: input.interviewerName ?? 'Ethan',
+    companyName: input.companyName,
     firstName: formatFirstName(input.candidateName),
     positionTitle: input.positionTitle,
     roleLabel: input.roleLabel ?? 'technical',

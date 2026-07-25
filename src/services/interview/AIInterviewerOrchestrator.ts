@@ -13,7 +13,7 @@ import {
   getCodingModePromptBlock,
   type CodingInterviewModeId,
 } from '../../constants/codingInterviewModes';
-import { buildInterviewWelcomeParts, buildFirstWarmUpQuestion, formatFirstName } from './InterviewWelcomeService';
+import { buildFirstWarmUpQuestion } from './InterviewWelcomeService';
 import { interviewerFirstName } from '../../constants/interviewerPersona';
 import { buildInterviewLanguagePromptBlock } from '../../constants/interviewLanguage';
 import { interviewSessionService } from './InterviewSessionService';
@@ -29,7 +29,7 @@ import {
 } from '../../constants/interviewDuration';
 import type { InterviewState, InterviewReport, AnswerEvaluation } from '../../types';
 
-const LLM_INTERVIEW_TIMEOUT_MS = 45000;
+const LLM_INTERVIEW_TIMEOUT_MS = 20000;
 
 export interface SubmitAnswerInput {
   interviewId: string;
@@ -88,58 +88,6 @@ export class AIInterviewerOrchestrator {
       return interviewerFirstName(state.interviewerPersona);
     }
     return state.role === 'technical' ? 'Ethan' : 'ZaraAlex';
-  }
-
-  private buildWelcomeParts(state: InterviewState): string[] {
-    const codingMode = state.codingInterviewMode as CodingInterviewModeId | undefined;
-    const interviewerName = this.interviewerName(state);
-    const companyName = state.companyName;
-    const positionTitle = state.positionTitle ?? state.resumeProfile?.positionTitle;
-    const profile = {
-      candidateName: state.candidateDisplayName ?? state.resumeProfile?.candidateName,
-      positionTitle,
-      skills: state.resumeProfile?.skills ?? [],
-      experience: state.resumeProfile?.experience ?? [],
-      projects: state.resumeProfile?.projects ?? [],
-      education: [] as string[],
-      certifications: [] as string[],
-      techStack: state.resumeProfile?.techStack ?? [],
-      achievements: [] as string[],
-      workHistory: state.resumeProfile?.experience ?? [],
-      summary: state.resumeProfile?.summary ?? '',
-    };
-    if (state.resumeProfile || state.resumeContext?.trim()) {
-      return buildInterviewWelcomeParts(profile, {
-        codingModeId: codingMode,
-        interviewerName,
-        roleLabel: this.roleLabel(state.role),
-        companyName,
-        interviewLanguage: state.interviewLanguage,
-      });
-    }
-    const firstName = formatFirstName(profile.candidateName);
-    return buildInterviewWelcomeParts(
-      {
-        candidateName: profile.candidateName,
-        positionTitle,
-        skills: [],
-        experience: [],
-        projects: [],
-        education: [],
-        certifications: [],
-        techStack: [],
-        achievements: [],
-        workHistory: [],
-        summary: '',
-      },
-      {
-        codingModeId: codingMode,
-        interviewerName,
-        roleLabel: this.roleLabel(state.role),
-        companyName,
-        interviewLanguage: state.interviewLanguage,
-      }
-    );
   }
 
   private interviewerPromptExtras(state: InterviewState): string {
@@ -218,73 +166,30 @@ export class AIInterviewerOrchestrator {
     const updatedState = await interviewSessionService.getStateWithBranding(input.interviewId);
     if (!updatedState) return { success: true, state: null };
 
+    // Fast path: pick next question immediately; score answers in the background.
     const shortAnswer = input.answerText.trim().length < 50;
-    let evaluation: AnswerEvaluation;
-    let next: Awaited<ReturnType<typeof questionStrategyEngine.getNextQuestion>>;
-    let aiReply = '';
+    const requestFollowUp = shortAnswer;
 
-    if (shortAnswer) {
-      evaluation = await evaluationEngine.evaluate(evaluateInput);
-      await interviewSessionService.updateTurnEvaluation(input.interviewId, candidateTurn.id, evaluation);
-      next = await questionStrategyEngine.getNextQuestion({
-        state: updatedState,
-        requestFollowUp: evaluation.normalizedScore < 0.5 || shortAnswer,
-      });
-    } else {
-      const [evalResult, provisional] = await Promise.all([
-        evaluationEngine.evaluate(evaluateInput),
-        (async () => {
-          const n = await questionStrategyEngine.getNextQuestion({
-            state: updatedState,
-            requestFollowUp: false,
-          });
-          if (!n) return { next: null as typeof n, aiReply: null as string | null };
-          try {
-            const reply = await this.getNextReplyInternal(
-              updatedState,
-              n.questionText,
-              n.questionId,
-              n.phase,
-              lastQuestionText,
-              input.answerText
-            );
-            return { next: n, aiReply: reply };
-          } catch (err) {
-            console.error('getNextReplyInternal failed (using fallback):', err);
-            return { next: n, aiReply: n.questionText || 'Thank you for that. Can you tell me a bit more?' };
-          }
-        })(),
-      ]);
-      evaluation = evalResult;
-      await interviewSessionService.updateTurnEvaluation(input.interviewId, candidateTurn.id, evaluation);
-
-      if (evaluation.normalizedScore < 0.5) {
-        next = await questionStrategyEngine.getNextQuestion({
-          state: updatedState,
-          requestFollowUp: true,
-        });
-        if (next) {
-          try {
-            aiReply = await this.getNextReplyInternal(
-              updatedState,
-              next.questionText,
-              next.questionId,
-              next.phase,
-              lastQuestionText,
-              input.answerText
-            );
-          } catch (err) {
-            console.error('getNextReplyInternal failed (using fallback):', err);
-            aiReply = next.questionText || 'Thank you for that. Can you tell me a bit more?';
-          }
-        }
-      } else {
-        next = provisional.next;
-        aiReply = provisional.aiReply ?? '';
+    const evalPromise = evaluationEngine.evaluate(evaluateInput).then(async (evaluation) => {
+      try {
+        await interviewSessionService.updateTurnEvaluation(
+          input.interviewId,
+          candidateTurn.id,
+          evaluation
+        );
+      } catch (err) {
+        console.error('Background evaluation persist failed:', err);
       }
-    }
+      return evaluation;
+    });
+
+    const next = await questionStrategyEngine.getNextQuestion({
+      state: updatedState,
+      requestFollowUp,
+    });
 
     if (!next) {
+      const evaluation = await evalPromise.catch(() => evaluationEngine.evaluate(evaluateInput));
       const report = scoringReportService.buildReport({ ...updatedState, endedAt: new Date().toISOString() });
       await interviewSessionService.end(input.interviewId, report);
       return {
@@ -296,48 +201,75 @@ export class AIInterviewerOrchestrator {
       };
     }
 
-    if (shortAnswer) {
-      try {
-        aiReply = await this.getNextReplyInternal(
-          updatedState,
-          next.questionText,
-          next.questionId,
-          next.phase,
-          lastQuestionText,
-          input.answerText
-        );
-      } catch (err) {
-        console.error('getNextReplyInternal failed (using fallback):', err);
-        aiReply = next.questionText || 'Thank you for that. Can you tell me a bit more?';
-      }
-    }
-    let avatarVideo: string | undefined;
+    let aiReply = '';
     try {
-      if (avatarService.isEnabled()) {
-        const avatarResult = await avatarService.generateAvatarWithTimeout({ text: aiReply });
-        avatarVideo = avatarResult.videoUrl;
-      }
+      aiReply = await this.getNextReplyInternal(
+        updatedState,
+        next.questionText,
+        next.questionId,
+        next.phase,
+        lastQuestionText,
+        input.answerText
+      );
     } catch (err) {
-      console.error('Avatar generation failed (non-blocking):', err);
+      console.error('getNextReplyInternal failed (using fallback):', err);
+      aiReply = next.questionText || 'Thank you for that. Can you tell me a bit more?';
     }
+
     const aiTurn = conversationManager.createTurn('ai', aiReply, {
       questionId: next.questionId,
       codingStarterCode: next.starterCode ?? undefined,
       codingLanguage: next.language ?? undefined,
       isCodingQuestion: next.isCodingQuestion ?? false,
-      avatarVideo,
     });
     await interviewSessionService.appendTurn(input.interviewId, aiTurn, {
       phase: next.phase,
       currentDifficulty: next.difficulty,
     });
 
+    if (avatarService.isEnabled()) {
+      void avatarService.generateAvatarWithTimeout({ text: aiReply }).then(async (avatarResult) => {
+        if (!avatarResult.videoUrl) return;
+        try {
+          const live = await interviewSessionService.getStateWithBranding(input.interviewId);
+          if (!live) return;
+          const turn = live.turns.find((t) => t.id === aiTurn.id);
+          if (turn) {
+            turn.avatarVideo = avatarResult.videoUrl;
+            await interviewSessionService.setState(input.interviewId, live);
+          }
+        } catch (err) {
+          console.error('Avatar attach failed (non-blocking):', err);
+        }
+      });
+    }
+
     const finalState = await interviewSessionService.getStateWithBranding(input.interviewId);
+    const evaluation = await Promise.race([
+      evalPromise,
+      new Promise<AnswerEvaluation>((resolve) =>
+        setTimeout(
+          () =>
+            resolve({
+              score: 6,
+              maxScore: 10,
+              relevance: 6,
+              structure: 6,
+              depth: 5,
+              competencyIds: competencyIds.length ? competencyIds : ['communication'],
+              redFlags: [],
+              feedbackSnippet: 'Answer recorded.',
+              normalizedScore: 0.6,
+            }),
+          2500
+        )
+      ),
+    ]);
+
     return {
       success: true,
       state: finalState ?? updatedState,
       nextReply: aiReply,
-      avatarVideo,
       evaluation: { score: evaluation.score, maxScore: evaluation.maxScore },
     };
   }
@@ -365,18 +297,17 @@ export class AIInterviewerOrchestrator {
     }
 
     const aiTurns = state.turns.filter((t) => t.role === 'ai');
-    const introTurns = aiTurns.filter((t) => t.isIntro);
-    const questionTurn = aiTurns.find((t) => !t.isIntro);
+    const questionTurn = aiTurns.find((t) => !t.isIntro) ?? aiTurns[0];
 
-    if (state.welcomeDelivered && introTurns.length >= 1 && questionTurn) {
+    if (state.welcomeDelivered && questionTurn) {
       console.log('[Interview] Welcome already delivered', {
         interviewId,
-        introBeats: introTurns.length,
+        turns: aiTurns.length,
       });
       return {
         success: true,
         state,
-        reply: introTurns[0]?.content ?? '',
+        reply: questionTurn.content ?? '',
         alreadyDelivered: true,
         questionId: questionTurn.questionId,
         phase: state.phase,
@@ -384,26 +315,18 @@ export class AIInterviewerOrchestrator {
     }
 
     if (aiTurns.length === 0) {
-      console.log('[Interview] Delivering welcome on live entry', { interviewId });
+      console.log('[Interview] Delivering humanized opener on live entry', { interviewId });
       return this.getNextReply({ interviewId });
     }
 
-    if (questionTurn && introTurns.length === 0) {
-      const welcomeParts = this.buildWelcomeParts(state);
-      const introOnlyTurns = welcomeParts.map((part) =>
-        conversationManager.createTurn('ai', part, { isIntro: true })
-      );
-      state.turns = [...introOnlyTurns, ...state.turns];
+    // Legacy sessions: mark delivered without injecting extra intro beats.
+    if (questionTurn && !state.welcomeDelivered) {
       state.welcomeDelivered = true;
       await interviewSessionService.setState(interviewId, state);
-      console.log('[Interview] Prepended missing welcome intro beats', {
-        interviewId,
-        introBeats: welcomeParts.length,
-      });
       return {
         success: true,
         state,
-        reply: welcomeParts[0] ?? '',
+        reply: questionTurn.content ?? '',
         questionId: questionTurn.questionId,
         phase: state.phase,
       };
@@ -457,34 +380,21 @@ export class AIInterviewerOrchestrator {
         roleLabel: this.roleLabel(state.role),
         codingModeId: state.codingInterviewMode as CodingInterviewModeId | undefined,
         interviewLanguage: state.interviewLanguage,
+        companyName: state.companyName,
+        interviewerName: this.interviewerName(state),
       });
     } else {
       rawReply = await this.getNextReplyInternal(state, next.questionText, next.questionId, next.phase);
     }
 
     if (isFirstQuestion) {
-      const welcomeParts = this.buildWelcomeParts(state);
-      for (const part of welcomeParts) {
-        const introTurn = conversationManager.createTurn('ai', part, { isIntro: true });
-        await interviewSessionService.appendTurn(input.interviewId, introTurn);
-      }
-
+      // One humanized opener only (greeting + first question) — never two spoken asks.
       const questionText = rawReply.trim();
-      let questionAvatarVideo: string | undefined;
-      try {
-        if (avatarService.isEnabled()) {
-          const avatarResult = await avatarService.generateAvatarWithTimeout({ text: questionText });
-          questionAvatarVideo = avatarResult.videoUrl;
-        }
-      } catch (err) {
-        console.error('Avatar generation failed (non-blocking):', err);
-      }
       const questionTurn = conversationManager.createTurn('ai', questionText, {
         questionId: next.questionId,
         codingStarterCode: next.starterCode ?? undefined,
         codingLanguage: next.language ?? undefined,
         isCodingQuestion: next.isCodingQuestion ?? false,
-        avatarVideo: questionAvatarVideo,
       });
       await interviewSessionService.appendTurn(input.interviewId, questionTurn, {
         phase: next.phase,
@@ -498,50 +408,53 @@ export class AIInterviewerOrchestrator {
       }
 
       const updatedState = await interviewSessionService.getStateWithBranding(input.interviewId);
-      console.log('[Interview] Welcome delivered', {
+      console.log('[Interview] Humanized opener delivered', {
         interviewId: input.interviewId,
-        introBeats: welcomeParts.length,
-        introPreview: welcomeParts[0]?.slice(0, 80),
-        questionPreview: questionText.slice(0, 80),
+        questionPreview: questionText.slice(0, 100),
       });
       return {
         success: true,
         state: updatedState ?? state,
-        reply: welcomeParts[0] ?? '',
-        avatarVideo: questionAvatarVideo,
+        reply: questionText,
         questionId: next.questionId,
         phase: next.phase,
       };
     }
 
     const reply = rawReply.trim();
-    let avatarVideo: string | undefined;
-    try {
-      if (avatarService.isEnabled()) {
-        const avatarResult = await avatarService.generateAvatarWithTimeout({ text: reply });
-        avatarVideo = avatarResult.videoUrl;
-      }
-    } catch (err) {
-      console.error('Avatar generation failed (non-blocking):', err);
-    }
     const aiTurn = conversationManager.createTurn('ai', reply, {
       questionId: next.questionId,
       codingStarterCode: next.starterCode ?? undefined,
       codingLanguage: next.language ?? undefined,
       isCodingQuestion: next.isCodingQuestion ?? false,
-      avatarVideo,
     });
     await interviewSessionService.appendTurn(input.interviewId, aiTurn, {
       phase: next.phase,
       currentDifficulty: next.difficulty,
     });
 
+    if (avatarService.isEnabled()) {
+      void avatarService.generateAvatarWithTimeout({ text: reply }).then(async (avatarResult) => {
+        if (!avatarResult.videoUrl) return;
+        try {
+          const live = await interviewSessionService.getStateWithBranding(input.interviewId);
+          if (!live) return;
+          const turn = live.turns.find((t) => t.id === aiTurn.id);
+          if (turn) {
+            turn.avatarVideo = avatarResult.videoUrl;
+            await interviewSessionService.setState(input.interviewId, live);
+          }
+        } catch (err) {
+          console.error('Avatar attach failed (non-blocking):', err);
+        }
+      });
+    }
+
     const updatedState = await interviewSessionService.getStateWithBranding(input.interviewId);
     return {
       success: true,
       state: updatedState ?? state,
       reply,
-      avatarVideo,
       questionId: next.questionId,
       phase: next.phase,
     };

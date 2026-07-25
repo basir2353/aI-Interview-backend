@@ -303,7 +303,7 @@ async function normalizeUploadedAudio(inputPath: string): Promise<string> {
   ];
 
   logger.info('[transcribe] running ffmpeg', { args: ffmpegArgs.join(' ') });
-  const ff = await runCommand('ffmpeg', ffmpegArgs, { timeoutMs: 60000 });
+  const ff = await runCommand('ffmpeg', ffmpegArgs, { timeoutMs: 20000 });
   if (ff.code !== 0) {
     throw new Error(`ffmpeg conversion failed: ${ff.stderr.slice(0, 2000) || ff.stdout.slice(0, 2000)}`);
   }
@@ -388,6 +388,7 @@ async function runLocalWhisper(
   prompt?: string
 ): Promise<string> {
   const outputTxtPath = `${normalizedPath}.txt`;
+  const threadCount = Math.max(2, Math.min(8, os.cpus()?.length || 4));
   const whisperArgs = [
     '-m',
     modelPath,
@@ -395,6 +396,10 @@ async function runLocalWhisper(
     normalizedPath,
     '-l',
     language,
+    '-t',
+    String(threadCount),
+    '-bs',
+    '1',
     '--no-timestamps',
     '-otxt',
   ];
@@ -403,7 +408,7 @@ async function runLocalWhisper(
   }
 
   logger.info('[transcribe] running whisper.cpp', { bin: whisperBin, args: whisperArgs.join(' ') });
-  const ws = await runCommand(whisperBin, whisperArgs, { timeoutMs: 240000 });
+  const ws = await runCommand(whisperBin, whisperArgs, { timeoutMs: 90000 });
 
   if (ws.code !== 0) {
     const errOut = ws.stderr.slice(0, 2000) || ws.stdout.slice(0, 2000);

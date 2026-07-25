@@ -211,42 +211,63 @@ const welcomeBuilders: Record<InterviewLanguageCode, WelcomeBuilder> = {
 
 const firstQuestionBuilders: Record<InterviewLanguageCode, FirstQuestionBuilder> = {
   'en-US': (ctx) => {
+    const company = ctx.companyName?.trim();
+    const hello = ctx.firstName
+      ? `Hi ${ctx.firstName}, thanks for joining — I'm ${ctx.interviewerName}${company ? ` with ${company}` : ''}.`
+      : `Hi there, thanks for joining — I'm ${ctx.interviewerName}${company ? ` with ${company}` : ''}.`;
     const roleRef = ctx.positionTitle ? `the ${ctx.positionTitle} role` : `this ${ctx.roleLabel} opportunity`;
-    const namePrefix = ctx.firstName ? `${ctx.firstName}, ` : '';
-    if (ctx.codingModeLabel) {
-      return `${namePrefix}I'd love to hear a bit about you. Tell me about yourself and the ${ctx.codingModeLabel} experience you're bringing to ${roleRef}.`;
-    }
-    return `${namePrefix}I'd love to hear a bit about you. Walk me through your background, and what drew you to ${roleRef}.`;
+    const ask = ctx.codingModeLabel
+      ? `To get us started, tell me a bit about yourself and the ${ctx.codingModeLabel} experience you're bringing to ${roleRef}.`
+      : `To get us started, walk me through your background and what drew you to ${roleRef}.`;
+    return `${hello} ${ask}`;
   },
   es: (ctx) => {
+    const company = ctx.companyName?.trim();
+    const hello = ctx.firstName
+      ? `Hola ${ctx.firstName}, gracias por unirte — soy ${ctx.interviewerName}${company ? ` de ${company}` : ''}.`
+      : `Hola, gracias por unirte — soy ${ctx.interviewerName}${company ? ` de ${company}` : ''}.`;
     const roleRef = ctx.positionTitle ? `el puesto de ${ctx.positionTitle}` : `esta oportunidad ${ctx.roleLabel}`;
-    const ask = `me encantaría conocerte un poco. Cuéntame sobre ti con tus propias palabras, y qué te atrajo de ${roleRef}.`;
-    return ctx.firstName ? `${ctx.firstName}, ${ask}` : ask.charAt(0).toUpperCase() + ask.slice(1);
+    return `${hello} Para empezar, cuéntame sobre ti y qué te atrajo de ${roleRef}.`;
   },
   fr: (ctx) => {
+    const company = ctx.companyName?.trim();
+    const hello = ctx.firstName
+      ? `Bonjour ${ctx.firstName}, merci d'être là — je suis ${ctx.interviewerName}${company ? ` pour ${company}` : ''}.`
+      : `Bonjour, merci d'être là — je suis ${ctx.interviewerName}${company ? ` pour ${company}` : ''}.`;
     const roleRef = ctx.positionTitle ? `le poste de ${ctx.positionTitle}` : `cette opportunité ${ctx.roleLabel}`;
-    const ask = `j'aimerais un peu vous connaître. Présentez-vous avec vos propres mots, et dites-moi ce qui vous a attiré vers ${roleRef}.`;
-    return ctx.firstName ? `${ctx.firstName}, ${ask}` : ask.charAt(0).toUpperCase() + ask.slice(1);
+    return `${hello} Pour commencer, présentez-vous brièvement et dites-moi ce qui vous a attiré vers ${roleRef}.`;
   },
   de: (ctx) => {
+    const company = ctx.companyName?.trim();
+    const hello = ctx.firstName
+      ? `Hallo ${ctx.firstName}, danke dass Sie da sind — ich bin ${ctx.interviewerName}${company ? ` von ${company}` : ''}.`
+      : `Hallo, danke dass Sie da sind — ich bin ${ctx.interviewerName}${company ? ` von ${company}` : ''}.`;
     const roleRef = ctx.positionTitle ? `die Stelle ${ctx.positionTitle}` : `diese ${ctx.roleLabel}-Gelegenheit`;
-    const ask = `ich würde Sie gerne etwas kennenlernen. Erzählen Sie in eigenen Worten von sich, und was Sie zu ${roleRef} gezogen hat.`;
-    return ctx.firstName ? `${ctx.firstName}, ${ask}` : ask.charAt(0).toUpperCase() + ask.slice(1);
+    return `${hello} Erzählen Sie zum Einstieg kurz von sich und was Sie zu ${roleRef} gezogen hat.`;
   },
   hi: (ctx) => {
+    const company = ctx.companyName?.trim();
+    const hello = ctx.firstName
+      ? `नमस्ते ${ctx.firstName}, जुड़ने के लिए धन्यवाद — मैं ${ctx.interviewerName} हूँ${company ? ` (${company})` : ''}।`
+      : `नमस्ते, जुड़ने के लिए धन्यवाद — मैं ${ctx.interviewerName} हूँ${company ? ` (${company})` : ''}।`;
     const roleRef = ctx.positionTitle ? `${ctx.positionTitle} भूमिका` : `इस ${ctx.roleLabel} अवसर`;
-    const ask = `मैं आपके बारे में थोड़ा सुनना चाहूँगा/चाहूँगी। अपने शब्दों में अपने बारे में बताइए, और ${roleRef} में आपको क्या आकर्षित किया।`;
-    return ctx.firstName ? `${ctx.firstName}, ${ask}` : ask;
+    return `${hello} शुरू करने के लिए, अपने बारे में थोड़ा बताइए और ${roleRef} में आपको क्या आकर्षित किया।`;
   },
   ar: (ctx) => {
+    const company = ctx.companyName?.trim();
+    const hello = ctx.firstName
+      ? `مرحباً ${ctx.firstName}، شكراً لانضمامك — أنا ${ctx.interviewerName}${company ? ` من ${company}` : ''}.`
+      : `مرحباً، شكراً لانضمامك — أنا ${ctx.interviewerName}${company ? ` من ${company}` : ''}.`;
     const roleRef = ctx.positionTitle ? `وظيفة ${ctx.positionTitle}` : `هذه الفرصة ${ctx.roleLabel}`;
-    const ask = `يسعدني أن أتعرف عليك قليلاً. حدّثني عن نفسك بكلماتك، وما الذي جذبك إلى ${roleRef}.`;
-    return ctx.firstName ? `${ctx.firstName}، ${ask}` : ask;
+    return `${hello} للبدء، حدّثني عن نفسك وما الذي جذبك إلى ${roleRef}.`;
   },
   ur: (ctx) => {
+    const company = ctx.companyName?.trim();
+    const hello = ctx.firstName
+      ? `السلام علیکم ${ctx.firstName}، شامل ہونے کا شکریہ — میں ${ctx.interviewerName} ہوں${company ? ` (${company})` : ''}۔`
+      : `السلام علیکم، شامل ہونے کا شکریہ — میں ${ctx.interviewerName} ہوں${company ? ` (${company})` : ''}۔`;
     const roleRef = ctx.positionTitle ? `${ctx.positionTitle} عہدہ` : `یہ ${ctx.roleLabel} موقع`;
-    const ask = `میں آپ کے بارے میں تھوڑا سننا چاہوں گا/گی۔ اپنے الفاظ میں اپنے بارے میں بتائیں، اور ${roleRef} میں آپ کو کیا متوجہ کیا۔`;
-    return ctx.firstName ? `${ctx.firstName}، ${ask}` : ask;
+    return `${hello} شروع کرنے کے لیے اپنے بارے میں تھوڑا بتائیں اور ${roleRef} میں آپ کو کیا متوجہ کیا۔`;
   },
 };
 

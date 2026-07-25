@@ -229,12 +229,28 @@ export async function sendInterviewScheduleEmail(input: {
   jobTitle?: string | null;
   durationMinutes?: number | null;
 }): Promise<{ sent: boolean; error?: string }> {
+  const provider = useEmailJs() ? 'emailjs' : useResend() ? 'resend' : 'smtp';
+  console.info(
+    `[Mail] Interview schedule email starting → to=${input.to} role=${input.role} provider=${provider} joinUrl=${input.joinUrl}`
+  );
   try {
     if (useEmailJs()) {
-      return sendInterviewScheduleViaEmailJs(input);
+      const result = await sendInterviewScheduleViaEmailJs(input);
+      if (result.sent) {
+        console.info(`[Mail] Interview schedule email SENT via EmailJS → ${input.to}`);
+      } else {
+        console.error(`[Mail] Interview schedule email FAILED via EmailJS → ${input.to}: ${result.error}`);
+      }
+      return result;
     }
     if (useResend()) {
-      return sendInterviewScheduleViaResend(input);
+      const result = await sendInterviewScheduleViaResend(input);
+      if (result.sent) {
+        console.info(`[Mail] Interview schedule email SENT via Resend → ${input.to}`);
+      } else {
+        console.error(`[Mail] Interview schedule email FAILED via Resend → ${input.to}: ${result.error}`);
+      }
+      return result;
     }
 
     const scheduledAtText = new Date(input.scheduledAt).toLocaleString();
@@ -264,7 +280,9 @@ export async function sendInterviewScheduleEmail(input: {
 
     const result = await sendViaSmtp({ to: input.to, subject, html, text });
     if (result.sent) {
-      console.info(`[Mail/SMTP] Interview email sent to ${input.to} from ${config.mail.from}`);
+      console.info(`[Mail/SMTP] Interview schedule email SENT → ${input.to} from ${config.mail.from}`);
+    } else {
+      console.error(`[Mail/SMTP] Interview schedule email FAILED → ${input.to}: ${result.error}`);
     }
     return result;
   } catch (e) {

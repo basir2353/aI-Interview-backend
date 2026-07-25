@@ -66,12 +66,17 @@ export async function sendViaEmailJs(input: {
   replyTo?: string;
 }): Promise<{ sent: boolean; error?: string }> {
   if (!isEmailJsConfigured()) {
+    console.error('[Mail/EmailJS] Not configured — missing EMAILJS_SERVICE_ID / TEMPLATE_ID / PUBLIC_KEY');
     return {
       sent: false,
       error:
         'EmailJS not configured. Set EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY.',
     };
   }
+
+  console.info(
+    `[Mail/EmailJS] Sending… to=${input.to} subject="${input.subject}" service=${config.mail.emailjs.serviceId} template=${config.mail.emailjs.templateId}`
+  );
 
   const payload: Record<string, unknown> = {
     service_id: config.mail.emailjs.serviceId,
@@ -104,15 +109,16 @@ export async function sendViaEmailJs(input: {
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
-      return {
-        sent: false,
-        error: `EmailJS ${response.status}: ${errText || response.statusText}`,
-      };
+      const error = `EmailJS ${response.status}: ${errText || response.statusText}`;
+      console.error(`[Mail/EmailJS] FAILED to=${input.to} — ${error}`);
+      return { sent: false, error };
     }
 
+    console.info(`[Mail/EmailJS] SENT OK → ${input.to} | ${input.subject}`);
     return { sent: true };
   } catch (e) {
     const err = e instanceof Error ? e.message : 'EmailJS send failed';
+    console.error(`[Mail/EmailJS] FAILED to=${input.to} — ${err}`);
     return { sent: false, error: err };
   }
 }

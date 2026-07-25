@@ -299,6 +299,9 @@ router.post(
           await query(`UPDATE applications SET status = 'interview_scheduled', updated_at = NOW() WHERE id = $1`, [applicationId]);
           interviewScheduled = true;
 
+          console.info(
+            `[Schedule/Apply] Auto-schedule interview → emailing ${candidate.email} joinUrl=${joinUrl}`
+          );
           const mailResult = await sendInterviewScheduleEmail({
             to: candidate.email,
             candidateName: candidate.name,
@@ -309,9 +312,17 @@ router.post(
             jobTitle: position.title || jobTitle,
           });
           interviewEmailSent = mailResult.sent;
-          if (!mailResult.sent) {
-            console.warn('[Apply] Auto-schedule interview email failed:', mailResult.error);
+          if (mailResult.sent) {
+            console.info(`[Schedule/Apply] Interview email SENT → ${candidate.email}`);
+          } else {
+            console.warn('[Schedule/Apply] Auto-schedule interview email failed:', mailResult.error);
           }
+          await query(
+            `UPDATE scheduled_interviews
+             SET email_sent = $2, email_error = $3, email_sent_at = CASE WHEN $2 = true THEN NOW() ELSE NULL END, updated_at = NOW()
+             WHERE join_token = $1`,
+            [joinToken, mailResult.sent, mailResult.error ?? null]
+          );
         } catch (e) {
           console.warn('Auto-schedule interview failed:', e instanceof Error ? e.message : e);
         }

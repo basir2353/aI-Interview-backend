@@ -10,6 +10,7 @@ import { config } from '../../config';
 import { query } from '../../db/client';
 import { validate } from '../middleware/validate';
 import { adminAuthMiddleware } from '../middleware/auth';
+import { sendInterviewScheduleEmail } from '../../services/email.service';
 import * as questionTemplateService from '../../services/questionTemplate.service';
 import {
   listContactSubmissions,
@@ -828,6 +829,25 @@ router.post(
       }
       const row = rows[0];
       const joinUrl = `${config.frontendUrl}/interview/join/${row.join_token}`;
+      console.info(
+        `[Schedule/Admin] Interview scheduled id=${row.id} → emailing ${row.candidate_email}`
+      );
+      const mailResult = await sendInterviewScheduleEmail({
+        to: row.candidate_email,
+        candidateName: row.candidate_name,
+        role: row.role,
+        scheduledAt: row.scheduled_at,
+        joinUrl,
+      });
+      await query(
+        `UPDATE scheduled_interviews
+         SET email_sent = $2, email_error = $3, email_sent_at = CASE WHEN $2 = true THEN NOW() ELSE NULL END, updated_at = NOW()
+         WHERE id = $1`,
+        [row.id, mailResult.sent, mailResult.error ?? null]
+      );
+      console.info(
+        `[Schedule/Admin] emailSent=${mailResult.sent}${mailResult.error ? ` error=${mailResult.error}` : ''}`
+      );
       res.status(201).json({
         id: row.id,
         joinToken: row.join_token,
@@ -837,6 +857,8 @@ router.post(
         role: row.role,
         scheduledAt: row.scheduled_at,
         status: row.status,
+        emailSent: mailResult.sent,
+        emailError: mailResult.error,
       });
     } catch (e) {
       const err = e as Error;

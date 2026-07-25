@@ -480,6 +480,9 @@ router.post(
       ]);
       const created = scheduleRows[0];
       const joinUrl = `${config.frontendUrl}/interview/join/${created.join_token}`;
+      console.info(
+        `[Schedule/Recruiter] Interview scheduled id=${created.id} → emailing ${created.candidate_email}`
+      );
       const mailResult = await sendInterviewScheduleEmail({
         to: created.candidate_email,
         candidateName: created.candidate_name,
@@ -497,6 +500,9 @@ router.post(
          SET email_sent = $2, email_error = $3, email_sent_at = CASE WHEN $2 = true THEN NOW() ELSE NULL END, updated_at = NOW()
          WHERE id = $1`,
         [created.id, mailResult.sent, mailResult.error ?? null]
+      );
+      console.info(
+        `[Schedule/Recruiter] emailSent=${mailResult.sent}${mailResult.error ? ` error=${mailResult.error}` : ''}`
       );
       return res.status(201).json({
         id: created.id,
@@ -894,6 +900,9 @@ router.post(
       }
       const row = rows[0];
       const joinUrl = `${config.frontendUrl}/interview/join/${row.join_token}`;
+      console.info(
+        `[Schedule/Recruiter] Interview scheduled id=${row.id} → emailing ${row.candidate_email}`
+      );
       const mailResult = await sendInterviewScheduleEmail({
         to: row.candidate_email,
         candidateName: row.candidate_name,
@@ -911,6 +920,9 @@ router.post(
          SET email_sent = $2, email_error = $3, email_sent_at = CASE WHEN $2 = true THEN NOW() ELSE NULL END, updated_at = NOW()
          WHERE id = $1`,
         [row.id, mailResult.sent, mailResult.error ?? null]
+      );
+      console.info(
+        `[Schedule/Recruiter] emailSent=${mailResult.sent}${mailResult.error ? ` error=${mailResult.error}` : ''}`
       );
       return res.status(201).json({
         id: row.id,

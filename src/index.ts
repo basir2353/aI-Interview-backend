@@ -37,12 +37,12 @@ async function initializeServices(io: SocketIOServer): Promise<void> {
     } else {
       logger.error(
         `[Mail] Verify failed: ${verify.error}. ` +
-          'Set RESEND_API_KEY (recommended) or SMTP vars in Railway Variables and redeploy.'
+          'Set EMAILJS_* (recommended) or SMTP vars in Railway Variables and redeploy.'
       );
     }
   } else {
     logger.warn(
-      '[Mail] Not configured. Set RESEND_API_KEY (recommended) or SMTP vars to send emails.'
+      '[Mail] Not configured. Set EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY to send emails.'
     );
   }
 

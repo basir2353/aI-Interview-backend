@@ -160,13 +160,21 @@ export const config = {
     pythonScriptPath: process.env.AVATAR_PYTHON_SCRIPT || path.join('..', 'ai-avatar', 'generate_avatar.py'),
   },
 
-  /** Mail: Resend API (preferred on Railway) or SMTP fallback. */
+  /** Mail: EmailJS (Gmail) preferred, Resend, or SMTP fallback. */
   mail: {
     provider: (() => {
       const explicit = (process.env.MAIL_PROVIDER || '').toLowerCase();
-      if (explicit === 'resend' || explicit === 'smtp') return explicit;
+      if (explicit === 'emailjs' || explicit === 'resend' || explicit === 'smtp') return explicit;
+      if (process.env.EMAILJS_PUBLIC_KEY && process.env.EMAILJS_SERVICE_ID) return 'emailjs';
       return process.env.RESEND_API_KEY ? 'resend' : 'smtp';
-    })() as 'resend' | 'smtp',
+    })() as 'emailjs' | 'resend' | 'smtp',
+    emailjs: {
+      serviceId: process.env.EMAILJS_SERVICE_ID || '',
+      templateId: process.env.EMAILJS_TEMPLATE_ID || '',
+      publicKey: process.env.EMAILJS_PUBLIC_KEY || '',
+      privateKey: process.env.EMAILJS_PRIVATE_KEY || '',
+      fromName: process.env.EMAILJS_FROM_NAME || 'Intervion',
+    },
     resendApiKey: process.env.RESEND_API_KEY || '',
     resendFrom:
       process.env.RESEND_FROM ||

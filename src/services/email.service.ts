@@ -11,6 +11,14 @@ import {
   candidateWelcomeText,
 } from './emailTemplates';
 import {
+  isEmailJsConfigured,
+  sendInterviewScheduleViaEmailJs,
+  sendPasswordResetViaEmailJs,
+  sendApplicationReceivedViaEmailJs,
+  sendCandidateWelcomeViaEmailJs,
+  verifyEmailJsConnection,
+} from './emailjsMail.service';
+import {
   isResendConfigured,
   sendInterviewScheduleViaResend,
   sendPasswordResetViaResend,
@@ -59,10 +67,20 @@ function isSmtpConfigured(): boolean {
   return hasAuth && Boolean(explicitService || host || inferredGmailService);
 }
 
+function useEmailJs(): boolean {
+  return config.mail.provider === 'emailjs' || (config.mail.provider !== 'resend' && isEmailJsConfigured());
+}
+
+function useResend(): boolean {
+  if (useEmailJs()) return false;
+  return config.mail.provider === 'resend' || isResendConfigured();
+}
+
 /** Whether any mail provider is configured. */
 export function isMailConfigured(): boolean {
+  if (config.mail.provider === 'emailjs') return isEmailJsConfigured();
   if (config.mail.provider === 'resend') return isResendConfigured();
-  return isSmtpConfigured() || isResendConfigured();
+  return isEmailJsConfigured() || isSmtpConfigured() || isResendConfigured();
 }
 
 function getTransporter(): nodemailer.Transporter | null {
@@ -101,7 +119,11 @@ function getTransporter(): nodemailer.Transporter | null {
 }
 
 export async function verifyMailConnection(): Promise<{ ok: boolean; error?: string }> {
-  if (config.mail.provider === 'resend' || isResendConfigured()) {
+  if (useEmailJs()) {
+    return verifyEmailJsConnection();
+  }
+
+  if (useResend()) {
     return verifyResendConnection();
   }
 
@@ -109,7 +131,7 @@ export async function verifyMailConnection(): Promise<{ ok: boolean; error?: str
     return {
       ok: false,
       error:
-        'Mail not configured. Set RESEND_API_KEY (recommended) or SMTP vars (MAIL_SERVICE, MAIL_USER, MAIL_PASS).',
+        'Mail not configured. Set EMAILJS_* (recommended) or SMTP vars (MAIL_SERVICE, MAIL_USER, MAIL_PASS).',
     };
   }
 
@@ -128,12 +150,37 @@ export async function verifyMailConnection(): Promise<{ ok: boolean; error?: str
 }
 
 export function getMailStatus() {
-  const useResend = config.mail.provider === 'resend' || isResendConfigured();
+  if (useEmailJs()) {
+    return {
+      configured: isEmailJsConfigured(),
+      provider: 'emailjs' as const,
+      from: config.mail.emailjs.fromName || 'Intervion (Gmail via EmailJS)',
+      service: config.mail.emailjs.serviceId,
+      host: undefined as string | undefined,
+      port: 0,
+      user: config.mail.emailjs.publicKey
+        ? `${config.mail.emailjs.publicKey.slice(0, 4)}***`
+        : '',
+    };
+  }
+
+  if (useResend()) {
+    return {
+      configured: isResendConfigured(),
+      provider: 'resend' as const,
+      from: config.mail.resendFrom,
+      service: 'resend',
+      host: undefined as string | undefined,
+      port: 0,
+      user: '',
+    };
+  }
+
   return {
-    configured: isMailConfigured(),
-    provider: useResend ? 'resend' : isSmtpConfigured() ? 'smtp' : 'none',
-    from: useResend ? config.mail.resendFrom : config.mail.from,
-    service: useResend ? 'resend' : config.mail.service || (config.mail.host ? 'custom-smtp' : ''),
+    configured: isSmtpConfigured(),
+    provider: isSmtpConfigured() ? ('smtp' as const) : ('none' as const),
+    from: config.mail.from,
+    service: config.mail.service || (config.mail.host ? 'custom-smtp' : ''),
     host: config.mail.host || undefined,
     port: config.mail.port,
     user: config.mail.user ? `${config.mail.user.slice(0, 3)}***` : '',
@@ -149,7 +196,7 @@ async function sendViaSmtp(input: {
   const tx = getTransporter();
   if (!tx) {
     const err =
-      'SMTP not configured. Set MAIL_SERVICE + MAIL_USER + MAIL_PASS, or use RESEND_API_KEY.';
+      'SMTP not configured. Set MAIL_SERVICE + MAIL_USER + MAIL_PASS, or use EMAILJS_*.';
     console.warn(`[Mail] ${err}`);
     return { sent: false, error: err };
   }
@@ -183,7 +230,10 @@ export async function sendInterviewScheduleEmail(input: {
   durationMinutes?: number | null;
 }): Promise<{ sent: boolean; error?: string }> {
   try {
-    if (config.mail.provider === 'resend' || isResendConfigured()) {
+    if (useEmailJs()) {
+      return sendInterviewScheduleViaEmailJs(input);
+    }
+    if (useResend()) {
       return sendInterviewScheduleViaResend(input);
     }
 
@@ -230,7 +280,10 @@ export async function sendPasswordResetEmail(input: {
   resetLink?: string;
 }): Promise<{ sent: boolean; error?: string }> {
   try {
-    if (config.mail.provider === 'resend' || isResendConfigured()) {
+    if (useEmailJs()) {
+      return sendPasswordResetViaEmailJs(input);
+    }
+    if (useResend()) {
       return sendPasswordResetViaResend(input);
     }
 
@@ -257,7 +310,10 @@ export async function sendApplicationReceivedEmail(input: {
   companyName?: string | null;
 }): Promise<{ sent: boolean; error?: string }> {
   try {
-    if (config.mail.provider === 'resend' || isResendConfigured()) {
+    if (useEmailJs()) {
+      return sendApplicationReceivedViaEmailJs(input);
+    }
+    if (useResend()) {
       return sendApplicationReceivedViaResend(input);
     }
     const dashboardUrl = `${config.frontendUrl.replace(/\/$/, '')}/candidate/applications`;
@@ -277,7 +333,10 @@ export async function sendCandidateWelcomeEmail(input: {
   candidateName?: string | null;
 }): Promise<{ sent: boolean; error?: string }> {
   try {
-    if (config.mail.provider === 'resend' || isResendConfigured()) {
+    if (useEmailJs()) {
+      return sendCandidateWelcomeViaEmailJs(input);
+    }
+    if (useResend()) {
       return sendCandidateWelcomeViaResend(input);
     }
     const dashboardUrl = `${config.frontendUrl.replace(/\/$/, '')}/candidate/dashboard`;

@@ -1,6 +1,11 @@
 import { config } from '../config';
 import { query } from '../db/client';
 import {
+  isEmailJsConfigured,
+  sendContactAdminNotificationViaEmailJs,
+  sendContactAutoReplyViaEmailJs,
+} from './emailjsMail.service';
+import {
   sendContactAdminNotificationViaResend,
   sendContactAutoReplyViaResend,
   fetchResendReceivedEmail,
@@ -98,12 +103,18 @@ export async function submitContactForm(input: {
   let autoReplySent = false;
 
   if (notifyEmail) {
-    const adminResult = await sendContactAdminNotificationViaResend({
-      to: notifyEmail,
-      submission,
-    });
+    const adminResult =
+      config.mail.provider === 'emailjs' || isEmailJsConfigured()
+        ? await sendContactAdminNotificationViaEmailJs({
+            to: notifyEmail,
+            submission,
+          })
+        : await sendContactAdminNotificationViaResend({
+            to: notifyEmail,
+            submission,
+          });
     emailSent = adminResult.sent;
-    if (adminResult.id) {
+    if ('id' in adminResult && adminResult.id) {
       await query(`UPDATE contact_submissions SET resend_outbound_id = $2, updated_at = NOW() WHERE id = $1`, [
         submission.id,
         adminResult.id,
@@ -111,10 +122,16 @@ export async function submitContactForm(input: {
     }
   }
 
-  const autoReply = await sendContactAutoReplyViaResend({
-    to: input.email,
-    name: input.name,
-  });
+  const autoReply =
+    config.mail.provider === 'emailjs' || isEmailJsConfigured()
+      ? await sendContactAutoReplyViaEmailJs({
+          to: input.email,
+          name: input.name,
+        })
+      : await sendContactAutoReplyViaResend({
+          to: input.email,
+          name: input.name,
+        });
   autoReplySent = autoReply.sent;
 
   return { submission, emailSent, autoReplySent };
